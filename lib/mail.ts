@@ -52,7 +52,7 @@ export async function sendEmail({ to, subject, html, text, replyTo }: SendEmailO
 
     return { data, error: null };
   } catch (err) {
-    console.error("Critical exception encountered during email transport stream:", err);
+    console.error("Critical exception encountered during email transport stream: ", err);
     return { data: null, error: err };
   }
 }
