@@ -5,7 +5,7 @@ export const AssetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("native") }),
   z.object({
     kind: z.literal("known"),
-    symbol: z.enum(["USDC"]),
+    symbol: z.enum(["USDC", "EURC", "BTC"]),
   }),
   z.object({
     kind: z.literal("custom"),

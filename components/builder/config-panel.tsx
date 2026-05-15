@@ -1,6 +1,6 @@
 "use client";
 
-import type { FlowNode } from "@/lib/flows/schema";
+import type { Asset, FlowNode } from "@/lib/flows/schema";
 
 type Props = {
   node: FlowNode | null;
@@ -298,16 +298,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
-function AssetField({
-  asset,
-  onChange,
-}: {
-  asset:
-    | { kind: "native" }
-    | { kind: "known"; symbol: "USDC" }
-    | { kind: "custom"; code: string; issuer: string };
-  onChange: (a: typeof asset) => void;
-}) {
+function AssetField({ asset, onChange }: { asset: Asset; onChange: (a: Asset) => void }) {
   return (
     <Field label="Asset">
       <select
@@ -317,11 +308,31 @@ function AssetField({
           const v = e.target.value;
           if (v === "native") onChange({ kind: "native" });
           else if (v === "known:USDC") onChange({ kind: "known", symbol: "USDC" });
+          else if (v === "custom") onChange({ kind: "custom", code: "", issuer: "" });
         }}
       >
         <option value="known:USDC">USDC</option>
         <option value="native">XLM (native)</option>
+        <option value="custom">Custom asset…</option>
       </select>
+      {asset.kind === "custom" && (
+        <div className="mt-2 space-y-1">
+          <input
+            className="input"
+            placeholder="Asset code (e.g. EURC)"
+            value={asset.code}
+            onChange={(e) =>
+              onChange({ kind: "custom", code: e.target.value, issuer: asset.issuer })
+            }
+          />
+          <input
+            className="input font-mono text-xs"
+            placeholder="Issuer G… address"
+            value={asset.issuer}
+            onChange={(e) => onChange({ kind: "custom", code: asset.code, issuer: e.target.value })}
+          />
+        </div>
+      )}
     </Field>
   );
 }
