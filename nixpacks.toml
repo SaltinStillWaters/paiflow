@@ -8,8 +8,8 @@ cmds = ["pnpm install --frozen-lockfile"]
 
 [phases.build]
 cmds = [
-  "DATABASE_URL='postgresql://dummy:dummy@localhost:5432/dummy?schema=public' AUTH_SECRET='build-time-dummy-secret-32-chars-long-aaaaaa' pnpm db:generate",
-  "DATABASE_URL='postgresql://dummy:dummy@localhost:5432/dummy?schema=public' AUTH_SECRET='build-time-dummy-secret-32-chars-long-aaaaaa' pnpm build",
+  "pnpm db:generate",
+  "pnpm build",
 ]
 
 [start]
