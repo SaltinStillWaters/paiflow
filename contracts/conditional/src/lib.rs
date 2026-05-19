@@ -17,6 +17,8 @@ pub enum ConditionKind {
     Timeout(u64),
     OracleGte(String),
     Multisig(u32),
+    AmountGte(i128),
+    AmountLt(i128),
 }
 
 #[contracttype]
@@ -96,12 +98,21 @@ impl Conditional {
         }
         let condition: ConditionKind = env.storage().instance().get(&Key::Condition).unwrap();
         let now = env.ledger().timestamp();
+        let asset: Address = env.storage().instance().get(&Key::Asset).unwrap();
         let can_release = match condition {
             ConditionKind::Timeout(ts) => now >= ts,
             ConditionKind::OracleGte(_) => {
                 panic_with_error!(&env, Error::OracleNotSupported);
             }
             ConditionKind::Multisig(_threshold) => true,
+            ConditionKind::AmountGte(threshold) => {
+                let balance = token::Client::new(&env, &asset).balance(&env.current_contract_address());
+                balance >= threshold
+            }
+            ConditionKind::AmountLt(threshold) => {
+                let balance = token::Client::new(&env, &asset).balance(&env.current_contract_address());
+                balance < threshold
+            }
         };
         if !can_release {
             panic_with_error!(&env, Error::ConditionNotMet);
@@ -382,6 +393,124 @@ mod test {
                         bps: 10_000,
                     },
                 ],
+                asset.address(),
+                1_000_i128,
+                condition,
+            ),
+        );
+        sac.mint(&contract_id, &1_000);
+        let client = ConditionalClient::new(&env, &contract_id);
+
+        env.ledger().set_timestamp(1000);
+        client.release();
+    }
+
+    #[test]
+    fn amount_gte_met_releases_funds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let asset = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac = token::StellarAssetClient::new(&env, &asset.address());
+        let tok = token::TokenClient::new(&env, &asset.address());
+        let recipient = Address::generate(&env);
+        let condition = ConditionKind::AmountGte(1_000_i128);
+
+        let contract_id = env.register(
+            Conditional,
+            (
+                admin.clone(),
+                make_recipients(&env, &recipient, &admin),
+                asset.address(),
+                1_000_i128,
+                condition,
+            ),
+        );
+        sac.mint(&contract_id, &1_000);
+        let client = ConditionalClient::new(&env, &contract_id);
+
+        assert!(!client.status());
+        client.release();
+        assert_eq!(tok.balance(&recipient), 600);
+        assert_eq!(tok.balance(&admin), 400);
+        assert!(client.status());
+    }
+
+    #[test]
+    fn amount_lt_met_releases_funds() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let asset = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac = token::StellarAssetClient::new(&env, &asset.address());
+        let tok = token::TokenClient::new(&env, &asset.address());
+        let recipient = Address::generate(&env);
+        let condition = ConditionKind::AmountLt(2_000_i128);
+
+        let contract_id = env.register(
+            Conditional,
+            (
+                admin.clone(),
+                make_recipients(&env, &recipient, &admin),
+                asset.address(),
+                1_000_i128,
+                condition,
+            ),
+        );
+        sac.mint(&contract_id, &1_000);
+        let client = ConditionalClient::new(&env, &contract_id);
+
+        assert!(!client.status());
+        client.release();
+        assert_eq!(tok.balance(&recipient), 600);
+        assert_eq!(tok.balance(&admin), 400);
+        assert!(client.status());
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn amount_gte_condition_not_met() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let asset = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac = token::StellarAssetClient::new(&env, &asset.address());
+        let recipient = Address::generate(&env);
+        let condition = ConditionKind::AmountGte(2_000_i128);
+
+        let contract_id = env.register(
+            Conditional,
+            (
+                admin.clone(),
+                make_recipients(&env, &recipient, &admin),
+                asset.address(),
+                1_000_i128,
+                condition,
+            ),
+        );
+        sac.mint(&contract_id, &1_000);
+        let client = ConditionalClient::new(&env, &contract_id);
+
+        env.ledger().set_timestamp(1000);
+        client.release();
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
+    fn amount_lt_condition_not_met() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let asset = env.register_stellar_asset_contract_v2(admin.clone());
+        let sac = token::StellarAssetClient::new(&env, &asset.address());
+        let recipient = Address::generate(&env);
+        let condition = ConditionKind::AmountLt(1_000_i128);
+
+        let contract_id = env.register(
+            Conditional,
+            (
+                admin.clone(),
+                make_recipients(&env, &recipient, &admin),
                 asset.address(),
                 1_000_i128,
                 condition,

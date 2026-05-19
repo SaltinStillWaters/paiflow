@@ -92,7 +92,11 @@ export function constructorArgs(params: ContractParams, admin: string): xdr.ScVa
         }
         case "amount_gt":
         case "amount_lt": {
-          throw new Error("amount_gt/amount_lt conditions are not yet supported");
+          cond = xdr.ScVal.scvVec([
+            nativeToScVal(c.kind === "amount_gt" ? "AmountGte" : "AmountLt", { type: "symbol" }),
+            i128(c.amountStroops as string),
+          ]);
+          break;
         }
         default:
           cond = xdr.ScVal.scvVec([
