@@ -1,15 +1,15 @@
 # Nixpacks build hints for Railway
 
 [phases.setup]
-nixPkgs = ["nodejs-22_x", "pnpm"]
+nixPkgs = ["nodejs_22", "pnpm"]
 
 [phases.install]
 cmds = ["pnpm install --frozen-lockfile"]
 
 [phases.build]
 cmds = [
-  "pnpm db:generate",
-  "pnpm build",
+  "DATABASE_URL='postgresql://dummy:dummy@localhost:5432/dummy?schema=public' AUTH_SECRET='build-time-dummy-secret-32-chars-long-aaaaaa' pnpm db:generate",
+  "DATABASE_URL='postgresql://dummy:dummy@localhost:5432/dummy?schema=public' AUTH_SECRET='build-time-dummy-secret-32-chars-long-aaaaaa' pnpm build",
 ]
 
 [start]
