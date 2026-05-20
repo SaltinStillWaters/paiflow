@@ -22,6 +22,7 @@ export default function DeploymentView({
   distributeAmountStroops,
   initialEvents,
   graph,
+  templateKind,
 }: {
   deploymentId: string;
   contractAddress: string | null;
@@ -30,6 +31,7 @@ export default function DeploymentView({
   distributeAmountStroops: string | null;
   initialEvents: Evt[];
   graph: FlowGraph | null;
+  templateKind?: "SPLITTER" | "STREAMER" | "CONDITIONAL";
 }) {
   const [events, setEvents] = useState<Evt[]>(initialEvents);
   const [pulse, setPulse] = useState(0);
@@ -99,7 +101,9 @@ export default function DeploymentView({
       <div className="gap-md grid grid-cols-1 lg:grid-cols-2">
         <section className="glass-panel p-md rounded-xl">
           <div className="flex items-center justify-between">
-            <h2 className="text-headline-sm text-on-surface">Trigger distribution</h2>
+            <h2 className="text-headline-sm text-on-surface">
+              {templateKind === "CONDITIONAL" ? "Fund contract" : "Trigger distribution"}
+            </h2>
             <span className="border-secondary/30 bg-secondary/10 text-label-sm text-secondary inline-flex items-center gap-1.5 rounded border px-2 py-1 font-mono">
               <span className="material-symbols-outlined text-[12px]">qr_code_2</span>
               FREIGHTER
@@ -108,7 +112,9 @@ export default function DeploymentView({
           {contractAddress ? (
             <>
               <p className="text-label-sm text-on-surface-variant mt-1 font-mono">
-                SET AMOUNT · SCAN WITH FREIGHTER WALLET.
+                {templateKind === "CONDITIONAL"
+                  ? "SCAN WITH FREIGHTER WALLET TO FUND."
+                  : "SET AMOUNT · SCAN WITH FREIGHTER WALLET."}
               </p>
               <div className="mt-md gap-md grid grid-cols-[160px_1fr]">
                 <div className="flex min-h-[160px] items-center justify-center rounded-lg bg-white p-3">
@@ -119,6 +125,8 @@ export default function DeploymentView({
                       height={140}
                       alt="QR code"
                     />
+                  ) : qrUrl ? (
+                    <span className="font-mono text-xs text-zinc-400">SET AMOUNT FIRST</span>
                   ) : (
                     <span className="font-mono text-xs text-zinc-400">NO QR YET</span>
                   )}

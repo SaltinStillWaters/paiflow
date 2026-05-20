@@ -21,7 +21,11 @@ export default async function EmbedPage({ params }: { params: Promise<{ deployme
   const graph = graphResult.data;
 
   const qrUrl =
-    d.flow.templateKind === "SPLITTER" ? `/api/deployments/${d.id}/qr?action=trigger` : null;
+    d.contractAddress && d.flow.templateKind === "SPLITTER"
+      ? `/api/deployments/${d.id}/qr?action=trigger`
+      : d.contractAddress && d.flow.templateKind === "CONDITIONAL"
+        ? `/api/deployments/${d.id}/qr?action=fund`
+        : null;
 
   return (
     <main className="px-margin py-md mx-auto max-w-4xl">
@@ -37,6 +41,7 @@ export default async function EmbedPage({ params }: { params: Promise<{ deployme
         qrUrl={qrUrl}
         distributeAmountStroops={d.distributeAmountStroops}
         graph={graph}
+        templateKind={d.flow.templateKind}
         initialEvents={d.events.map((e) => ({
           id: e.id,
           kind: e.kind,

@@ -21,6 +21,7 @@ export type AuditAction =
   | "DEPLOY_CONFIRM"
   | "DEPLOY_FAIL"
   | "DEPLOY_TRIGGER"
+  | "DEPLOY_FUND"
   | "DEPLOY_AMOUNT_CHANGE"
   | "ADMIN_USER_CREATE"
   | "ADMIN_USER_UPDATE"

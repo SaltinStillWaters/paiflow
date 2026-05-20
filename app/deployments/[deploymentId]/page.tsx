@@ -64,7 +64,9 @@ export default async function DeploymentPage({
   const qrUrl =
     d.contractAddress && d.flow.templateKind === "SPLITTER"
       ? `/api/deployments/${d.id}/qr?action=trigger`
-      : null;
+      : d.contractAddress && d.flow.templateKind === "CONDITIONAL"
+        ? `/api/deployments/${d.id}/qr?action=fund`
+        : null;
 
   const badge = statusMeta[d.status] ?? {
     label: d.status?.toUpperCase() ?? "—",
@@ -129,6 +131,7 @@ export default async function DeploymentPage({
           qrUrl={qrUrl}
           distributeAmountStroops={d.distributeAmountStroops}
           graph={graph}
+          templateKind={d.flow.templateKind}
           initialEvents={d.events.map((e) => ({
             id: e.id,
             kind: e.kind,

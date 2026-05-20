@@ -4,13 +4,14 @@ import { db } from "@/lib/db";
 import { getSessionUser } from "@/lib/auth";
 import { sep7PaymentUri } from "@/lib/stellar/sep7";
 import { prepareDistributeTx } from "@/lib/stellar/invoke";
+import { preparePaymentTx } from "@/lib/stellar/payment";
 import { FlowGraphSchema, isTrigger } from "@/lib/flows/schema";
 import { z } from "zod";
 
 const Query = z.object({
   size: z.coerce.number().int().min(64).max(1024).default(256),
   format: z.enum(["svg", "png"]).default("svg"),
-  action: z.enum(["pay", "invoke", "trigger"]).default("pay"),
+  action: z.enum(["pay", "invoke", "trigger", "fund"]).default("pay"),
   amount: z.string().regex(/^\d+$/).optional(),
 });
 
@@ -60,6 +61,15 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       sourceAccount: d.sourceAccount,
     });
     uri = `web+stellar:tx?xdr=${encodeURIComponent(xdr)}`;
+  } else if (q.action === "fund") {
+    if (d.flow.templateKind !== "CONDITIONAL") {
+      return new Response("Fund QR only available for conditional deployments", { status: 400 });
+    }
+    if (d.status !== "CONFIRMED") {
+      return new Response("Contract not yet confirmed", { status: 400 });
+    }
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    uri = `${appUrl}/fund/${d.id}`;
   } else {
     const graph = FlowGraphSchema.safeParse(d.graphSnapshot);
     const trigger = graph.success ? graph.data.nodes.find(isTrigger) : null;
