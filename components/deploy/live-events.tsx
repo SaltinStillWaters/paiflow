@@ -1,13 +1,12 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { formatStroops, shortAddrExtraShort } from "@/lib/utils";
 import { stellarExpertTxUrl, type StellarNetwork } from "@/lib/stellar/explorer";
-import type { FlowGraph } from "@/lib/flows/schema";
 import { POLL_EVENTS_INTERVAL_MS } from "@/lib/deployments/constants";
 
-type Evt = {
+export type Evt = {
   id: string;
   kind: string;
   ledger: number;
@@ -18,8 +17,6 @@ type Evt = {
   _isNew?: boolean;
 };
 
-type DecodedData = Record<string, unknown>;
-
 type Recipient = {
   address: string;
   amount?: string;
@@ -28,11 +25,8 @@ type Recipient = {
 };
 
 type LiveEventsProps = {
-  deploymentId: string;
+  events: Evt[];
   network: StellarNetwork | null;
-  status: string;
-  initialEvents: Evt[];
-  graph: FlowGraph | null;
 };
 
 const KIND_META: Record<string, { label: string; color: string; icon: string }> = {
@@ -247,45 +241,7 @@ function EventRow({ evt, network }: { evt: Evt; network: StellarNetwork | null }
   );
 }
 
-export function LiveEvents({
-  deploymentId,
-  network,
-  status,
-  initialEvents,
-  graph,
-}: LiveEventsProps) {
-  const [events, setEvents] = useState<Evt[]>(initialEvents);
-
-  useEffect(() => {
-    if (status !== "CONFIRMED") return;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`/api/deployments/${deploymentId}/poll-events`);
-        if (!res.ok) return;
-        const { events: newEvents } = await res.json();
-        setEvents((prev) => {
-          const merged = [...prev];
-          for (const data of newEvents as Evt[]) {
-            if (!merged.some((p) => p.id === data.id || p.txHash === data.txHash)) {
-              merged.unshift({ ...data, _isNew: true });
-            }
-          }
-          return merged.slice(0, 100);
-        });
-      } catch {
-        /* ignore */
-      }
-    };
-
-    poll();
-    intervalId = setInterval(poll, POLL_EVENTS_INTERVAL_MS);
-    return () => {
-      if (intervalId) clearInterval(intervalId);
-    };
-  }, [deploymentId, status]);
-
+export function LiveEvents({ events, network }: LiveEventsProps) {
   const pollLabel =
     POLL_EVENTS_INTERVAL_MS >= 1000
       ? `${POLL_EVENTS_INTERVAL_MS / 1000}s`
