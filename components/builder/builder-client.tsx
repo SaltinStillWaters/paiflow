@@ -237,6 +237,20 @@ function Builder({ flowId, initialName, initialGraph }: BuilderProps) {
 
   function updateNode(updated: FlowNode) {
     setFlowNodes((arr) => arr.map((n) => (n.id === updated.id ? updated : n)));
+    setRfNodes((arr) =>
+      arr.map((n) =>
+        n.id === updated.id
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                node: updated,
+                label: nodeLabel(updated),
+              },
+            }
+          : n,
+      ),
+    );
   }
 
   function deleteNode(id: string) {
