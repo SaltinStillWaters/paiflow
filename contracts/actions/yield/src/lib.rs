@@ -93,17 +93,19 @@ impl Yield {
         let vault: Address = env.storage().instance().get(&Key::Vault).unwrap();
 
         // Transfer tokens to vault, then call deposit to get shares credited.
-        token::Client::new(&env, &asset).transfer(
-            &env.current_contract_address(),
-            &vault,
-            &amount,
-        );
+        token::Client::new(&env, &asset).transfer(&env.current_contract_address(), &vault, &amount);
 
         let shares_received = deposit_to_vault(&env, &vault, amount);
 
         let mut pos: VaultPosition = env.storage().instance().get(&Key::Position).unwrap();
-        pos.total_deposited = pos.total_deposited.checked_add(amount).unwrap_or(pos.total_deposited);
-        pos.total_shares = pos.total_shares.checked_add(shares_received).unwrap_or(pos.total_shares);
+        pos.total_deposited = pos
+            .total_deposited
+            .checked_add(amount)
+            .unwrap_or(pos.total_deposited);
+        pos.total_shares = pos
+            .total_shares
+            .checked_add(shares_received)
+            .unwrap_or(pos.total_shares);
         env.storage().instance().set(&Key::Position, &pos);
 
         let next_steps: Vec<WorkflowTarget> = env
@@ -247,10 +249,13 @@ impl Yield {
     }
 
     pub fn position(env: Env) -> VaultPosition {
-        env.storage().instance().get(&Key::Position).unwrap_or(VaultPosition {
-            total_deposited: 0,
-            total_shares: 0,
-        })
+        env.storage()
+            .instance()
+            .get(&Key::Position)
+            .unwrap_or(VaultPosition {
+                total_deposited: 0,
+                total_shares: 0,
+            })
     }
 
     pub fn vault(env: Env) -> Address {
@@ -326,19 +331,37 @@ mod test {
     #[contractimpl]
     impl MockVault {
         pub fn __constructor(env: Env, asset: Address) {
-            env.storage().instance().set(&symbol_short!("asset"), &asset);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("asset"), &asset);
             env.storage().instance().set(&symbol_short!("bal"), &0i128);
         }
         pub fn deposit(env: Env, amount: i128) -> i128 {
-            let bal: i128 = env.storage().instance().get(&symbol_short!("bal")).unwrap_or(0);
-            env.storage().instance().set(&symbol_short!("bal"), &(bal + amount));
+            let bal: i128 = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("bal"))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("bal"), &(bal + amount));
             amount // 1 share per token
         }
         pub fn redeem(env: Env, shares: i128, recipient: Address) -> i128 {
-            let asset: Address = env.storage().instance().get(&symbol_short!("asset")).unwrap();
-            let bal: i128 = env.storage().instance().get(&symbol_short!("bal")).unwrap_or(0);
+            let asset: Address = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("asset"))
+                .unwrap();
+            let bal: i128 = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("bal"))
+                .unwrap_or(0);
             let out = if shares > bal { bal } else { shares };
-            env.storage().instance().set(&symbol_short!("bal"), &(bal - out));
+            env.storage()
+                .instance()
+                .set(&symbol_short!("bal"), &(bal - out));
             token::Client::new(&env, &asset).transfer(
                 &env.current_contract_address(),
                 &recipient,
@@ -355,13 +378,19 @@ mod test {
     #[contractimpl]
     impl MockYieldingVault {
         pub fn __constructor(env: Env, asset: Address) {
-            env.storage().instance().set(&symbol_short!("asset"), &asset);
+            env.storage()
+                .instance()
+                .set(&symbol_short!("asset"), &asset);
         }
         pub fn deposit(_env: Env, amount: i128) -> i128 {
             amount
         }
         pub fn redeem(env: Env, shares: i128, recipient: Address) -> i128 {
-            let asset: Address = env.storage().instance().get(&symbol_short!("asset")).unwrap();
+            let asset: Address = env
+                .storage()
+                .instance()
+                .get(&symbol_short!("asset"))
+                .unwrap();
             let amount = shares + shares / 10;
             token::Client::new(&env, &asset).transfer(
                 &env.current_contract_address(),
