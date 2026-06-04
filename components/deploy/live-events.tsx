@@ -4,7 +4,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { formatAmount, shortAddrExtraShort } from "@/lib/utils";
 import { stellarExpertTxUrl, type StellarNetwork } from "@/lib/stellar/explorer";
-import { POLL_EVENTS_INTERVAL_MS } from "@/lib/deployments/constants";
 
 export type Evt = {
   id: string;
@@ -247,18 +246,13 @@ function EventRow({ evt, network }: { evt: Evt; network: StellarNetwork | null }
 }
 
 export function LiveEvents({ events, network }: LiveEventsProps) {
-  const pollLabel =
-    POLL_EVENTS_INTERVAL_MS >= 1000
-      ? `${POLL_EVENTS_INTERVAL_MS / 1000}s`
-      : `${POLL_EVENTS_INTERVAL_MS}ms`;
-
   return (
     <section className="glass-panel p-md rounded-xl">
       <div className="flex items-center justify-between">
         <h2 className="text-headline-sm text-on-surface">Live events</h2>
         <span className="text-label-sm text-on-surface-variant inline-flex items-center gap-1.5 font-mono">
           <span className="status-dot-live h-1.5 w-1.5" />
-          POLL · {pollLabel}
+          SSE · LIVE
         </span>
       </div>
       <ul className="mt-md max-h-96 space-y-2 overflow-y-auto">

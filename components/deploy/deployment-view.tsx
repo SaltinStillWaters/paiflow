@@ -1,12 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import DeploymentCanvas from "./deployment-canvas";
 import { LiveEvents, type Evt } from "./live-events";
 import type { FlowGraph } from "@/lib/flows/schema";
 import { stellarExpertContractUrl, type StellarNetwork } from "@/lib/stellar/explorer";
-import { POLL_EVENTS_INTERVAL_MS } from "@/lib/deployments/constants";
 
 export default function DeploymentView({
   deploymentId,
@@ -29,43 +28,98 @@ export default function DeploymentView({
     contractAddress && network ? stellarExpertContractUrl(contractAddress, network) : null;
   const [pulse, setPulse] = useState(0);
   const [events, setEvents] = useState<Evt[]>(initialEvents);
+  const esRef = useRef<EventSource | null>(null);
+  const lastEventIdRef = useRef<string | null>(null);
+  const [isConnected, setIsConnected] = useState(false);
 
-  // Single source of polling for the whole deployment page. Both the canvas
-  // pulse animation and the LiveEvents feed derive from this one fetch.
+  const mergeEvents = (prev: Evt[], incoming: Evt[]) => {
+    const merged = [...prev];
+    let addedPulses = 0;
+    for (const data of incoming) {
+      const isDuplicate = merged.some((p) => p.txHash === data.txHash && p.kind === data.kind);
+      if (!isDuplicate) {
+        merged.unshift({ ...data, _isNew: true });
+        setTimeout(() => {
+          setEvents((curr) =>
+            curr.map((e) =>
+              e.txHash === data.txHash && e.kind === data.kind ? { ...e, _isNew: false } : e,
+            ),
+          );
+        }, 250);
+        if (data.kind === "RECEIVE" || data.kind === "PAYOUT") {
+          addedPulses += 1;
+        }
+      }
+    }
+    if (addedPulses > 0) setPulse((p) => p + addedPulses);
+    return merged.slice(0, 100);
+  };
+
   useEffect(() => {
-    if (status !== "CONFIRMED") return;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+    if (status !== "CONFIRMED") {
+      if (esRef.current) {
+        esRef.current.close();
+        esRef.current = null;
+        setIsConnected(false);
+      }
+      return;
+    }
 
-    const poll = async () => {
+    const url = `/api/deployments/${deploymentId}/events${
+      lastEventIdRef.current ? `?lastEventId=${encodeURIComponent(lastEventIdRef.current)}` : ""
+    }`;
+    const es = new EventSource(url);
+    esRef.current = es;
+
+    es.addEventListener("connected", () => {
+      setIsConnected(true);
+    });
+
+    es.addEventListener("message", (e) => {
       try {
-        const res = await fetch(`/api/deployments/${deploymentId}/poll-events`);
-        if (!res.ok) return;
-        const { events: newEvents } = (await res.json()) as { events: Evt[] };
-
-        setEvents((prev) => {
-          const merged = [...prev];
-          let addedPulses = 0;
-          for (const data of newEvents) {
-            if (!merged.some((p) => p.id === data.id || p.txHash === data.txHash)) {
-              merged.unshift({ ...data, _isNew: true });
-              if (data.kind === "RECEIVE" || data.kind === "PAYOUT") {
-                addedPulses += 1;
-              }
-            }
-          }
-          if (addedPulses > 0) setPulse((p) => p + addedPulses);
-          return merged.slice(0, 100);
-        });
+        const event = JSON.parse(e.data) as Evt;
+        lastEventIdRef.current = `${event.txHash}:${event.kind}`;
+        setEvents((prev) => mergeEvents(prev, [event]));
       } catch {
         /* ignore */
       }
+    });
+
+    es.onerror = () => {
+      setIsConnected(false);
+      es.close();
+      esRef.current = null;
+      const fallbackUrl = `/api/deployments/${deploymentId}/poll-events`;
+      fetch(fallbackUrl)
+        .then((r) => r.json())
+        .then(({ events: polledEvents }) => {
+          setEvents((prev) => mergeEvents(prev, polledEvents));
+        })
+        .catch(() => null);
     };
 
-    poll();
-    intervalId = setInterval(poll, POLL_EVENTS_INTERVAL_MS);
     return () => {
-      if (intervalId) clearInterval(intervalId);
+      es.close();
+      esRef.current = null;
+      setIsConnected(false);
     };
+  }, [deploymentId, status]);
+
+  useEffect(() => {
+    if (status === "CONFIRMED") return;
+    const id = setInterval(async () => {
+      try {
+        const r = await fetch(`/api/deployments/${deploymentId}/status`);
+        if (!r.ok) return;
+        const { status: newStatus } = (await r.json()) as { status: string };
+        if (newStatus === "CONFIRMED") {
+          window.location.reload();
+        }
+      } catch {
+        /* ignore */
+      }
+    }, 2000);
+    return () => clearInterval(id);
   }, [deploymentId, status]);
 
   async function copy(text: string) {
