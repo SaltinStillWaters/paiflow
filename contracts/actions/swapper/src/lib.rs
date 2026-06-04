@@ -62,7 +62,9 @@ impl Swapper {
         env.storage().instance().set(&Key::AssetIn, &asset_in);
         env.storage().instance().set(&Key::AssetOut, &asset_out);
         env.storage().instance().set(&Key::AmmRouter, &amm_router);
-        env.storage().instance().set(&Key::SlippageBps, &slippage_bps);
+        env.storage()
+            .instance()
+            .set(&Key::SlippageBps, &slippage_bps);
         env.storage().instance().set(&Key::NextSteps, &next_steps);
         env.storage().instance().set(&Key::Version, &VERSION);
     }
@@ -211,7 +213,11 @@ mod test {
     impl MockRouter {
         pub fn __constructor(_env: Env) {}
 
-        pub fn router_get_amounts_out(_env: Env, amount_in: i128, _path: Vec<Address>) -> Vec<i128> {
+        pub fn router_get_amounts_out(
+            _env: Env,
+            amount_in: i128,
+            _path: Vec<Address>,
+        ) -> Vec<i128> {
             // Simulate a 5% fee / price impact.
             let amount_out = amount_in * 95 / 100;
             vec![&_env, amount_in, amount_out]
