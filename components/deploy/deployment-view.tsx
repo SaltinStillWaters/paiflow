@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import DeploymentCanvas from "./deployment-canvas";
 import { LiveEvents, type Evt } from "./live-events";
 import type { FlowGraph } from "@/lib/flows/schema";
 import { stellarExpertContractUrl, type StellarNetwork } from "@/lib/stellar/explorer";
 import { POLL_EVENTS_INTERVAL_MS } from "@/lib/deployments/constants";
+
+type ConnectionStatus = "live" | "reconnecting" | "disconnected";
 
 export default function DeploymentView({
   deploymentId,
@@ -29,9 +31,9 @@ export default function DeploymentView({
     contractAddress && network ? stellarExpertContractUrl(contractAddress, network) : null;
   const [pulse, setPulse] = useState(0);
   const [events, setEvents] = useState<Evt[]>(initialEvents);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("live");
+  const failureCountRef = useRef(0);
 
-  // Single source of polling for the whole deployment page. Both the canvas
-  // pulse animation and the LiveEvents feed derive from this one fetch.
   useEffect(() => {
     if (status !== "CONFIRMED") return;
     let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -39,7 +41,15 @@ export default function DeploymentView({
     const poll = async () => {
       try {
         const res = await fetch(`/api/deployments/${deploymentId}/poll-events`);
-        if (!res.ok) return;
+        if (!res.ok) {
+          failureCountRef.current += 1;
+          if (failureCountRef.current >= 3) {
+            setConnectionStatus("reconnecting");
+          }
+          return;
+        }
+        failureCountRef.current = 0;
+        setConnectionStatus("live");
         const { events: newEvents } = (await res.json()) as { events: Evt[] };
 
         setEvents((prev) => {
@@ -57,7 +67,10 @@ export default function DeploymentView({
           return merged.slice(0, 100);
         });
       } catch {
-        /* ignore */
+        failureCountRef.current += 1;
+        if (failureCountRef.current >= 3) {
+          setConnectionStatus("reconnecting");
+        }
       }
     };
 
@@ -169,7 +182,7 @@ export default function DeploymentView({
           )}
         </section>
 
-        <LiveEvents events={events} network={network} />
+        <LiveEvents events={events} network={network} connectionStatus={connectionStatus} />
       </div>
     </div>
   );

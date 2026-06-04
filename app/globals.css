@@ -315,6 +315,15 @@ h4 {
   animation: pulse-glow-tertiary 2s infinite;
 }
 
+.status-dot-error {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: #ff4d4d;
+  box-shadow: 0 0 6px rgba(255, 77, 77, 0.8);
+  animation: none;
+}
+
 /* Animated flow line keyframe — used by custom builder edges */
 @keyframes flow-dash {
   to {
