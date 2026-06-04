@@ -56,7 +56,10 @@ export function flowToEnglish(graph: FlowGraph): string {
       action.config.asset,
     )} to ${who}`;
   } else if (action.type === "swap") {
-    actionText = `swap ${assetLabel(action.config.assetIn)} to ${assetLabel(action.config.assetOut)} at ${(action.config.rateBps / 100).toFixed(0)}% rate`;
+    const routerShort = isPendingAddress(action.config.ammRouter)
+      ? "(needs router)"
+      : `${action.config.ammRouter.slice(0, 4)}…${action.config.ammRouter.slice(-4)}`;
+    actionText = `swap ${assetLabel(action.config.assetIn)} to ${assetLabel(action.config.assetOut)} via ${routerShort}`;
   } else if (action.type === "yield") {
     const vault = isPendingAddress(action.config.vault)
       ? "(needs address)"

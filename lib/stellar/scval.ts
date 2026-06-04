@@ -221,7 +221,8 @@ export function pipelineNodeConstructorArgs(
         addr(admin),
         addr(assetContractId(params.assetIn)),
         addr(assetContractId(params.assetOut)),
-        u32(params.rateBps),
+        addr(params.ammRouter),
+        u32(params.slippageBps),
         workflowTargets(params.nextStepNodeIds, nodeAddresses),
         addr(parentAddress),
       ];

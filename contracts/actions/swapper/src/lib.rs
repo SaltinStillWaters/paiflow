@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, token,
-    vec, Address, Env, IntoVal, String, Vec,
+    vec, Address, Env, IntoVal, String, Symbol, Vec,
 };
 
 #[contracttype]
@@ -16,7 +16,8 @@ pub enum Key {
     Admin,
     AssetIn,
     AssetOut,
-    RateBps,
+    AmmRouter,
+    SlippageBps,
     NextSteps,
     Version,
 }
@@ -29,11 +30,13 @@ pub enum Error {
     Unauthorized = 2,
     InvalidAmount = 3,
     InsufficientOutput = 4,
-    BadRate = 5,
+    BadSlippage = 5,
+    SwapFailed = 6,
 }
 
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const TOTAL_BPS: u32 = 10_000;
+const SWAP_DEADLINE_SECONDS: u64 = 300;
 
 #[contract]
 pub struct Swapper;
@@ -45,35 +48,23 @@ impl Swapper {
         admin: Address,
         asset_in: Address,
         asset_out: Address,
-        rate_bps: u32,
+        amm_router: Address,
+        slippage_bps: u32,
         next_steps: Vec<WorkflowTarget>,
     ) {
         if env.storage().instance().has(&Key::Admin) {
             panic_with_error!(&env, Error::AlreadyInitialized);
         }
-        if rate_bps == 0 || rate_bps > TOTAL_BPS {
-            panic_with_error!(&env, Error::BadRate);
+        if slippage_bps == 0 || slippage_bps >= TOTAL_BPS {
+            panic_with_error!(&env, Error::BadSlippage);
         }
         env.storage().instance().set(&Key::Admin, &admin);
         env.storage().instance().set(&Key::AssetIn, &asset_in);
         env.storage().instance().set(&Key::AssetOut, &asset_out);
-        env.storage().instance().set(&Key::RateBps, &rate_bps);
+        env.storage().instance().set(&Key::AmmRouter, &amm_router);
+        env.storage().instance().set(&Key::SlippageBps, &slippage_bps);
         env.storage().instance().set(&Key::NextSteps, &next_steps);
         env.storage().instance().set(&Key::Version, &VERSION);
-    }
-
-    /// Admin tops up the contract with asset_out so it can fulfill swaps.
-    pub fn top_up(env: Env, from: Address, amount: i128) {
-        from.require_auth();
-        let asset_out: Address = env.storage().instance().get(&Key::AssetOut).unwrap();
-        token::Client::new(&env, &asset_out).transfer(
-            &from,
-            env.current_contract_address(),
-            &amount,
-        );
-
-        #[allow(deprecated)]
-        env.events().publish((symbol_short!("topup"), from), amount);
     }
 
     pub fn receive_and_forward(
@@ -92,43 +83,78 @@ impl Swapper {
         }
 
         let asset_out: Address = env.storage().instance().get(&Key::AssetOut).unwrap();
-        let rate_bps: u32 = env.storage().instance().get(&Key::RateBps).unwrap();
+        let amm_router: Address = env.storage().instance().get(&Key::AmmRouter).unwrap();
+        let slippage_bps: u32 = env.storage().instance().get(&Key::SlippageBps).unwrap();
         let next_steps: Vec<WorkflowTarget> =
             env.storage().instance().get(&Key::NextSteps).unwrap();
 
-        // amount_out = amount * rate_bps / 10_000
-        let amount_out = amount
-            .checked_mul(rate_bps as i128)
-            .and_then(|v| v.checked_div(TOTAL_BPS as i128))
-            .unwrap_or(0);
-        if amount_out <= 0 {
+        let path = vec![&env, asset_in.clone(), asset_out.clone()];
+
+        // Query the router for the expected output amount.
+        let contract_addr = env.current_contract_address();
+        let amounts = env.invoke_contract::<Vec<i128>>(
+            &amm_router,
+            &Symbol::new(&env, "router_get_amounts_out"),
+            vec![&env, amount.into_val(&env), path.into_val(&env)],
+        );
+
+        let expected_out = amounts.last().unwrap_or(0);
+        if expected_out <= 0 {
             panic_with_error!(&env, Error::InsufficientOutput);
         }
 
-        // In a real DEX integration this would call the AMM.
-        // Here we simulate: asset_in is absorbed by the contract (or sent to a sink),
-        // and asset_out is forwarded from the contract's balance.
+        // Apply slippage tolerance.
+        let amount_out_min = expected_out
+            .checked_mul((TOTAL_BPS - slippage_bps) as i128)
+            .and_then(|v| v.checked_div(TOTAL_BPS as i128))
+            .unwrap_or(0);
+        if amount_out_min <= 0 {
+            panic_with_error!(&env, Error::InsufficientOutput);
+        }
+
+        let deadline = env.ledger().timestamp() + SWAP_DEADLINE_SECONDS;
+
+        // Execute the swap via the AMM router.
+        let swap_result = env.try_invoke_contract::<Vec<i128>, soroban_sdk::Error>(
+            &amm_router,
+            &Symbol::new(&env, "swap_exact_tokens_for_tokens"),
+            vec![
+                &env,
+                amount.into_val(&env),
+                amount_out_min.into_val(&env),
+                path.into_val(&env),
+                contract_addr.into_val(&env),
+                deadline.into_val(&env),
+            ],
+        );
+
+        match swap_result {
+            Ok(Ok(_)) => {}
+            _ => panic_with_error!(&env, Error::SwapFailed),
+        }
+
+        // Forward the received asset_out to the next step(s).
         let out_client = token::Client::new(&env, &asset_out);
-        let contract_balance = out_client.balance(&env.current_contract_address());
-        if contract_balance < amount_out {
+        let contract_balance = out_client.balance(&contract_addr);
+        if contract_balance <= 0 {
             panic_with_error!(&env, Error::InsufficientOutput);
         }
 
         for step in next_steps.iter() {
-            out_client.transfer(&env.current_contract_address(), &step.address, &amount_out);
+            out_client.transfer(&contract_addr, &step.address, &contract_balance);
             invoke_receive_and_forward(
                 &env,
                 &step.address,
-                &env.current_contract_address(),
+                &contract_addr,
                 &asset_out,
-                &amount_out,
+                &contract_balance,
             );
         }
 
         #[allow(deprecated)]
         env.events().publish(
-            (symbol_short!("swap"), asset, asset_out),
-            (amount, amount_out),
+            (symbol_short!("swap"), asset_in, asset_out),
+            (amount, contract_balance),
         );
     }
 
@@ -140,8 +166,12 @@ impl Swapper {
         env.storage().instance().get(&Key::AssetOut).unwrap()
     }
 
-    pub fn rate_bps(env: Env) -> u32 {
-        env.storage().instance().get(&Key::RateBps).unwrap()
+    pub fn amm_router(env: Env) -> Address {
+        env.storage().instance().get(&Key::AmmRouter).unwrap()
+    }
+
+    pub fn slippage_bps(env: Env) -> u32 {
+        env.storage().instance().get(&Key::SlippageBps).unwrap()
     }
 }
 
@@ -173,6 +203,43 @@ mod test {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{contract, contractimpl, token, vec, Env};
 
+    /// Mock AMM router for unit tests.
+    #[contract]
+    pub struct MockRouter;
+
+    #[contractimpl]
+    impl MockRouter {
+        pub fn __constructor(_env: Env) {}
+
+        pub fn router_get_amounts_out(_env: Env, amount_in: i128, _path: Vec<Address>) -> Vec<i128> {
+            // Simulate a 5% fee / price impact.
+            let amount_out = amount_in * 95 / 100;
+            vec![&_env, amount_in, amount_out]
+        }
+
+        pub fn swap_exact_tokens_for_tokens(
+            env: Env,
+            amount_in: i128,
+            _amount_out_min: i128,
+            path: Vec<Address>,
+            to: Address,
+            _deadline: u64,
+        ) -> Vec<i128> {
+            let token_in = path.get(0).unwrap();
+            let token_out = path.get(1).unwrap();
+            let caller = env.current_contract_address();
+
+            // Simulate what Soroswap Router does: pull input tokens from `to` into the router.
+            token::Client::new(&env, &token_in).transfer(&to, &caller, &amount_in);
+
+            // Simulate swap: transfer token_out from router to `to`.
+            let amount_out = amount_in * 95 / 100;
+            token::Client::new(&env, &token_out).transfer(&caller, &to, &amount_out);
+
+            vec![&env, amount_in, amount_out]
+        }
+    }
+
     #[contract]
     pub struct Dummy;
 
@@ -190,9 +257,9 @@ mod test {
     }
 
     #[test]
-    fn swaps_at_fixed_rate() {
+    fn swaps_via_amm_router() {
         let env = Env::default();
-        env.mock_all_auths();
+        env.mock_all_auths_allowing_non_root_auth();
 
         let admin = Address::generate(&env);
         let asset_in = env.register_stellar_asset_contract_v2(admin.clone());
@@ -203,8 +270,10 @@ mod test {
 
         let predecessor = Address::generate(&env);
         sac_in.mint(&predecessor, &1_000);
-        // Contract needs asset_out to fulfill the swap
-        sac_out.mint(&admin, &950);
+
+        // Pre-fund the mock router with asset_out so it can fulfill swaps.
+        let router_id = env.register(MockRouter, ());
+        sac_out.mint(&router_id, &1_000);
 
         let next = env.register(Dummy, ());
         let next_steps = vec![
@@ -221,29 +290,28 @@ mod test {
                 admin.clone(),
                 asset_in.address(),
                 asset_out.address(),
-                9_500_u32, // 0.95 rate
+                router_id.clone(),
+                100_u32, // 1% slippage
                 next_steps,
             ),
         );
         let client = SwapperClient::new(&env, &contract_id);
 
-        // Top up contract with asset_out
-        client.top_up(&admin, &950);
-
-        // Predecessor sends asset_in to contract
+        // Predecessor sends asset_in to swapper contract.
         let tok_in = token::TokenClient::new(&env, &asset_in.address());
         tok_in.transfer(&predecessor, &contract_id, &1_000);
+
         client.receive_and_forward(&predecessor, &asset_in.address(), &1_000, &vec![&env]);
 
-        // 1000 * 9500 / 10000 = 950
+        // 1000 * 95 / 100 = 950 (mock router simulates 5% fee)
         assert_eq!(tok_out.balance(&next), 950);
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #4)")]
-    fn insufficient_output_panics() {
+    #[should_panic(expected = "Error(Contract, #6)")]
+    fn swap_failed_when_router_has_no_liquidity() {
         let env = Env::default();
-        env.mock_all_auths();
+        env.mock_all_auths_allowing_non_root_auth();
 
         let admin = Address::generate(&env);
         let asset_in = env.register_stellar_asset_contract_v2(admin.clone());
@@ -253,13 +321,16 @@ mod test {
         let predecessor = Address::generate(&env);
         sac_in.mint(&predecessor, &1_000);
 
+        let router_id = env.register(MockRouter, ());
+
         let contract_id = env.register(
             Swapper,
             (
                 admin,
                 asset_in.address(),
                 asset_out.address(),
-                9_500_u32,
+                router_id,
+                100_u32,
                 Vec::<WorkflowTarget>::new(&env),
             ),
         );
@@ -267,7 +338,8 @@ mod test {
 
         let tok_in = token::TokenClient::new(&env, &asset_in.address());
         tok_in.transfer(&predecessor, &contract_id, &1_000);
-        // Contract has no asset_out, so it should panic
+
+        // Mock router has no asset_out, so swap will produce 0 output and panic.
         client.receive_and_forward(&predecessor, &asset_in.address(), &1_000, &vec![&env]);
     }
 }

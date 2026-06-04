@@ -147,7 +147,8 @@ export const SwapAction = z.object({
   config: z.object({
     assetIn: AssetSchema,
     assetOut: AssetSchema,
-    rateBps: z.number().int().min(1).max(10_000),
+    ammRouter: z.string().min(1),
+    slippageBps: z.number().int().min(1).max(9_999).default(50),
   }),
 });
 

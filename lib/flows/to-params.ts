@@ -109,7 +109,8 @@ export type SwapperNodeParams = {
   kind: "swapper";
   assetIn: Asset;
   assetOut: Asset;
-  rateBps: number;
+  ammRouter: string;
+  slippageBps: number;
   nextStepNodeIds: string[];
 };
 
@@ -339,7 +340,8 @@ export function flowToPipeline(graph: FlowGraph): PipelineNode[] {
           kind: "swapper",
           assetIn: action.config.assetIn,
           assetOut: action.config.assetOut,
-          rateBps: action.config.rateBps,
+          ammRouter: action.config.ammRouter,
+          slippageBps: action.config.slippageBps,
           nextStepNodeIds: children.get(action.id) ?? [],
         },
       });

@@ -3,7 +3,7 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { FlowNode } from "@/lib/flows/schema";
-import { isAction } from "@/lib/flows/schema";
+import { isAction, isPendingAddress } from "@/lib/flows/schema";
 import { formatAmount } from "@/lib/utils";
 
 type ActionNodeData = {
@@ -45,7 +45,10 @@ function ActionNodeComponent({ data, selected }: NodeProps) {
         : n.config.assetOut.kind === "native"
           ? "XLM"
           : n.config.assetOut.code;
-    detail = `${inLabel} → ${outLabel} @ ${(n.config.rateBps / 100).toFixed(0)}%`;
+    const routerShort = isPendingAddress(n.config.ammRouter)
+      ? "(needs router)"
+      : `${n.config.ammRouter.slice(0, 4)}…${n.config.ammRouter.slice(-4)}`;
+    detail = `${inLabel} → ${outLabel} via ${routerShort}`;
   } else if (n.type === "yield") {
     icon = "savings";
     title = "Yield";

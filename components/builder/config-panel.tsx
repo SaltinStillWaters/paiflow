@@ -521,26 +521,45 @@ export default function ConfigPanel({ node, graph, onChange, onDelete, className
               }
             />
           </Field>
-          <Field label="Rate (basis points, 1–10000)">
+          <Field label="AMM Router address">
+            <div className="relative">
+              <input
+                className={`input font-mono ${isPendingAddress(node.config.ammRouter) ? "ring-1 ring-amber-700" : ""}`}
+                value={node.config.ammRouter}
+                onChange={(e) =>
+                  onChange({
+                    ...node,
+                    config: { ...node.config, ammRouter: e.target.value.trim() },
+                  })
+                }
+              />
+              {isPendingAddress(node.config.ammRouter) && (
+                <span className="absolute -top-2 right-1 rounded bg-amber-950 px-1.5 py-0.5 text-[10px] text-amber-400">
+                  needs address
+                </span>
+              )}
+            </div>
+          </Field>
+          <Field label="Slippage (basis points, 1–9999)">
             <input
               className="input"
               type="number"
               min={1}
-              max={10000}
-              value={node.config.rateBps}
+              max={9999}
+              value={node.config.slippageBps}
               onChange={(e) => {
                 const v = Number(e.target.value);
                 onChange({
                   ...node,
                   config: {
                     ...node.config,
-                    rateBps: isNaN(v) ? 1 : Math.min(10000, Math.max(1, v)),
+                    slippageBps: isNaN(v) ? 1 : Math.min(9999, Math.max(1, v)),
                   },
                 });
               }}
             />
             <div className="mt-0.5 text-[11px] text-zinc-500">
-              = {(node.config.rateBps / 100).toFixed(0)}%
+              = {(node.config.slippageBps / 100).toFixed(2)}%
             </div>
           </Field>
         </>
