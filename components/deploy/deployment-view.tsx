@@ -29,7 +29,6 @@ export default function DeploymentView({
   const [pulse, setPulse] = useState(0);
   const [events, setEvents] = useState<Evt[]>(initialEvents);
   const esRef = useRef<EventSource | null>(null);
-  const lastEventIdRef = useRef<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
 
   const mergeEvents = (prev: Evt[], incoming: Evt[]) => {
@@ -39,13 +38,6 @@ export default function DeploymentView({
       const isDuplicate = merged.some((p) => p.txHash === data.txHash && p.kind === data.kind);
       if (!isDuplicate) {
         merged.unshift({ ...data, _isNew: true });
-        setTimeout(() => {
-          setEvents((curr) =>
-            curr.map((e) =>
-              e.txHash === data.txHash && e.kind === data.kind ? { ...e, _isNew: false } : e,
-            ),
-          );
-        }, 250);
         if (data.kind === "RECEIVE" || data.kind === "PAYOUT") {
           addedPulses += 1;
         }
@@ -53,6 +45,16 @@ export default function DeploymentView({
     }
     if (addedPulses > 0) setPulse((p) => p + addedPulses);
     return merged.slice(0, 100);
+  };
+
+  const clearIsNew = (txHash: string, kind: string) => {
+    setEvents((curr) =>
+      curr.map((e) => (e.txHash === txHash && e.kind === kind ? { ...e, _isNew: false } : e)),
+    );
+  };
+
+  const scheduleClearIsNew = (txHash: string, kind: string) => {
+    setTimeout(() => clearIsNew(txHash, kind), 250);
   };
 
   useEffect(() => {
@@ -65,10 +67,7 @@ export default function DeploymentView({
       return;
     }
 
-    const url = `/api/deployments/${deploymentId}/events${
-      lastEventIdRef.current ? `?lastEventId=${encodeURIComponent(lastEventIdRef.current)}` : ""
-    }`;
-    const es = new EventSource(url);
+    const es = new EventSource(`/api/deployments/${deploymentId}/events`);
     esRef.current = es;
 
     es.addEventListener("connected", () => {
@@ -78,13 +77,14 @@ export default function DeploymentView({
     es.addEventListener("message", (e) => {
       try {
         const event = JSON.parse(e.data) as Evt;
-        lastEventIdRef.current = `${event.txHash}:${event.kind}`;
         setEvents((prev) => mergeEvents(prev, [event]));
+        scheduleClearIsNew(event.txHash, event.kind);
       } catch {
         /* ignore */
       }
     });
 
+    const RECONNECT_DELAY_MS = 5000;
     es.onerror = () => {
       setIsConnected(false);
       es.close();
@@ -94,8 +94,15 @@ export default function DeploymentView({
         .then((r) => r.json())
         .then(({ events: polledEvents }) => {
           setEvents((prev) => mergeEvents(prev, polledEvents));
+          polledEvents.forEach((ev: Evt) => scheduleClearIsNew(ev.txHash, ev.kind));
         })
         .catch(() => null);
+      setTimeout(() => {
+        if (status === "CONFIRMED") {
+          const newEs = new EventSource(`/api/deployments/${deploymentId}/events`);
+          esRef.current = newEs;
+        }
+      }, RECONNECT_DELAY_MS);
     };
 
     return () => {

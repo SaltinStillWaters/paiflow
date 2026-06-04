@@ -25,8 +25,6 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const encoder = new TextEncoder();
   let subscribed = false;
   let aborted = false;
-  const lastEventId: string | null = req.nextUrl.searchParams.get("lastEventId");
-
   const stream = new ReadableStream({
     async start(controller) {
       const send = (data: string) => {
