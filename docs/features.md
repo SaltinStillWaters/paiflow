@@ -27,6 +27,13 @@ Six new contract templates implementing the full architecture from issue #132.
 
 ### Actions
 
+- **`contracts/actions/yield`** — yield aggregator. Deposits tokens into an external
+  vault via `vault.deposit(amount)` and tracks shares received.
+  - `harvest(reinvest)` redeems shares to separate yield from principal.
+    When `reinvest=false`, yield is forwarded to `next_steps`.
+    When `reinvest=true`, principal + yield are redeposited to compound returns.
+  - `withdraw()` redeems all shares and forwards principal + yield to `next_steps`.
+  - View functions: `position()`, `vault()`, `asset()`.
 - **`contracts/actions/swapper`** — fixed-rate token swapper. Receives `asset_in`,
   computes `asset_out = amount * rate_bps / 10_000` from the contract's topped-up
   balance, and forwards `asset_out` to `next_steps`.
