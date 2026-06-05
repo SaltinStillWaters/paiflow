@@ -58,56 +58,64 @@ export default function DeploymentView({
   };
 
   useEffect(() => {
-    if (status !== "CONFIRMED") {
-      if (esRef.current) {
-        esRef.current.close();
-        esRef.current = null;
-        setIsConnected(false);
-      }
-      return;
-    }
+    if (status !== "CONFIRMED") return;
 
-    const es = new EventSource(`/api/deployments/${deploymentId}/events`);
-    esRef.current = es;
+    let es: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
 
-    es.addEventListener("connected", () => {
-      setIsConnected(true);
-    });
+    const connectSSE = () => {
+      if (cancelled || status !== "CONFIRMED") return;
+      es = new EventSource(`/api/deployments/${deploymentId}/events`);
+      esRef.current = es;
 
-    es.addEventListener("message", (e) => {
-      try {
-        const event = JSON.parse(e.data) as Evt;
-        setEvents((prev) => mergeEvents(prev, [event]));
-        scheduleClearIsNew(event.txHash, event.kind);
-      } catch {
-        /* ignore */
-      }
-    });
+      es.addEventListener("connected", () => {
+        if (!cancelled) setIsConnected(true);
+      });
 
-    const RECONNECT_DELAY_MS = 5000;
-    es.onerror = () => {
-      setIsConnected(false);
-      es.close();
-      esRef.current = null;
-      const fallbackUrl = `/api/deployments/${deploymentId}/poll-events`;
-      fetch(fallbackUrl)
-        .then((r) => r.json())
-        .then(({ events: polledEvents }) => {
-          setEvents((prev) => mergeEvents(prev, polledEvents));
-          polledEvents.forEach((ev: Evt) => scheduleClearIsNew(ev.txHash, ev.kind));
-        })
-        .catch(() => null);
-      setTimeout(() => {
-        if (status === "CONFIRMED") {
-          const newEs = new EventSource(`/api/deployments/${deploymentId}/events`);
-          esRef.current = newEs;
+      es.addEventListener("message", (e) => {
+        if (cancelled) return;
+        try {
+          const event = JSON.parse(e.data) as Evt;
+          setEvents((prev) => mergeEvents(prev, [event]));
+          scheduleClearIsNew(event.txHash, event.kind);
+        } catch {
+          /* ignore */
         }
-      }, RECONNECT_DELAY_MS);
+      });
+
+      es.onerror = () => {
+        if (cancelled) return;
+        setIsConnected(false);
+        if (es) {
+          es.close();
+          esRef.current = null;
+          es = null;
+        }
+        const fallbackUrl = `/api/deployments/${deploymentId}/poll-events`;
+        fetch(fallbackUrl)
+          .then((r) => r.json())
+          .then(({ events: polledEvents }) => {
+            if (cancelled) return;
+            setEvents((prev) => mergeEvents(prev, polledEvents));
+            polledEvents.forEach((ev: Evt) => scheduleClearIsNew(ev.txHash, ev.kind));
+          })
+          .catch(() => null);
+        reconnectTimer = setTimeout(() => {
+          if (!cancelled) connectSSE();
+        }, 5000);
+      };
     };
 
+    connectSSE();
+
     return () => {
-      es.close();
-      esRef.current = null;
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (es) {
+        es.close();
+        esRef.current = null;
+      }
       setIsConnected(false);
     };
   }, [deploymentId, status]);
