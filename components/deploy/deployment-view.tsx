@@ -6,9 +6,7 @@ import DeploymentCanvas from "./deployment-canvas";
 import { LiveEvents, type Evt } from "./live-events";
 import type { FlowGraph } from "@/lib/flows/schema";
 import { stellarExpertContractUrl, type StellarNetwork } from "@/lib/stellar/explorer";
-import { POLL_EVENTS_INTERVAL_MS } from "@/lib/deployments/constants";
-
-type ConnectionStatus = "live" | "reconnecting" | "disconnected";
+import type { ConnectionStatus } from "@/lib/deployments/types";
 
 export default function DeploymentView({
   deploymentId,

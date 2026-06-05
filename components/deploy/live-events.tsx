@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { formatAmount, shortAddrExtraShort } from "@/lib/utils";
 import { stellarExpertTxUrl, type StellarNetwork } from "@/lib/stellar/explorer";
+import type { ConnectionStatus } from "@/lib/deployments/types";
 
 export type Evt = {
   id: string;
@@ -22,8 +23,6 @@ type Recipient = {
   label?: string;
   bps?: number;
 };
-
-type ConnectionStatus = "live" | "reconnecting" | "disconnected";
 
 type LiveEventsProps = {
   events: Evt[];
