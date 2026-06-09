@@ -4,14 +4,14 @@
 
 A visual builder for programmable payments. Drag triggers, drop actions, deploy a non-custodial Soroban contract in under a minute — without writing Rust.
 
-| Field       | Value                                                                                                         |
-| ----------- | ------------------------------------------------------------------------------------------------------------- |
-| **Version** | v0.1 (living document)                                                                                        |
-| **Status**  | Mainnet-ready application, contract library expanding                                                         |
-| **License** | MIT                                                                                                           |
-| **Network** | Stellar / Soroban (testnet for staging, mainnet for production)                                               |
-| **Custody** | Non-custodial. Wallets sign; servers never see a secret key.                                                  |
-| **Repo**    | [github.com/webnxt-2030/pinkraft](https://github.com/webnxt-2030/pinkraft) _(rebrand to `paiflow` in flight)_ |
+| Field       | Value                                                                                                          |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| **Version** | v0.1 (living document)                                                                                         |
+| **Status**  | Mainnet-ready application; contract library at 14 Rust crates; multi-contract pipelines per deployment         |
+| **License** | MIT                                                                                                            |
+| **Network** | Stellar / Soroban (testnet for staging, mainnet for production)                                                |
+| **Custody** | Non-custodial for user funds. Optional application-owned **relayer** for automated timelock releases — see §8. |
+| **Repo**    | [github.com/webnxt-2030/pinkraft](https://github.com/webnxt-2030/pinkraft) _(rebrand to `paiflow` in flight)_  |
 
 > **Note on naming.** Paiflow was previously known as **Pink Raft** through the APAC Stellar Hackathon 2026 cycle. The product and codebase are the same; the rebrand is in flight at the time of writing.
 
@@ -42,7 +42,7 @@ Programmable payments are stuck behind a credentials gate. To wire up a workflow
 
 The product is **non-custodial by design**: the backend prepares simulated XDR, the user's own wallet signs, and the backend submits the signed transaction. No key material ever lands on a Paiflow server.
 
-This v0.1 whitepaper covers the architecture, the contract template library currently in the repo (three families — **triggers**, **conditions**, **actions** — across 12 implemented crates with Rust unit tests), the security posture, the AI-assisted authoring layer ("Raft Log"), and a placeholder roadmap signalling direction without committing to dates the team hasn't agreed on yet.
+This v0.1 whitepaper covers the architecture, the contract template library currently in the repo (three families — **triggers**, **conditions**, **actions** — across 13 implemented crates plus a factory, with Rust unit tests on every crate), how multi-contract pipelines compose a single user-facing flow, the security posture (including the optional application-owned **relayer** that handles automated timelock releases), the AI-assisted authoring layer ("Raft Log"), and a placeholder roadmap signalling direction without committing to dates the team hasn't agreed on yet.
 
 The ask is simple: **integrators and partners who want programmable payments on Stellar without writing or auditing their own Soroban code should treat Paiflow as their default deploy surface.**
 
@@ -156,7 +156,9 @@ flowchart LR
 
 ### 5.4 The deploy flow
 
-The non-custodial deploy is the load-bearing piece. End to end, for a single deployment:
+The non-custodial deploy is the load-bearing piece. A single user-facing flow can compose into a **pipeline of multiple Soroban contracts** (e.g. a timelock condition wired into a splitter action). The deploy step instantiates each contract in order, wires their addresses together via constructor parameters, and records the full chain in `Deployment.pipelineSnapshot` so the live event feed, the trigger flow, and the cron relayer all share one consistent view.
+
+End to end, for a single-contract pipeline:
 
 ```mermaid
 sequenceDiagram
@@ -203,6 +205,17 @@ The implementation is intentionally simple. The page polls `GET /api/deployments
 
 Earlier iterations of this stack used Server-Sent Events fanned out from a Redis pub/sub queue populated by a background worker. We removed both. The current page-level RPC poll is **one moving part**, has no global background process, and is trivially debuggable — open the Network tab, watch the requests. The trade-off is ~1 second of latency vs. the previous near-instant SSE delivery. For the product's actual use case (a human watching a phone), 1 second is invisible.
 
+### 5.7 The relayer (optional, opt-in)
+
+Some templates — most notably **timelock** — need a transaction to fire _after_ a wall-clock event, with no human at the keyboard. To support that without weakening the non-custodial guarantee, Paiflow has an optional **relayer** path.
+
+- The relayer is an **application-owned Stellar account**, configured via `STELLAR_RELAYER_SECRET_KEY`. When the env var is unset, no relayer path exists at all.
+- A cron endpoint (`POST /api/cron/auto-release`, gated by `CRON_SECRET`) walks `CONFIRMED` deployments, finds any nodes in the pipeline whose `templateKind === "TIMELOCK"`, and invokes a single contract function — `release_by_relayer()` — on each. Nothing else.
+- The contract itself enforces the scope. `release_by_relayer` is admission-controlled to the relayer address recorded at deploy time, and it can only release funds to the recipient that was wired into the timelock at construction. The relayer cannot transfer arbitrary funds, change recipients, or call any other contract function.
+- Users who don't want a relayer-released timelock can deploy the same contract with the admin address as the relayer; the cron walks past those without action.
+
+The implication for the security model is covered honestly in §8.1. The short version: the backend holds **one** key (the relayer), and that key has been scoped by contract logic to do exactly **one** thing.
+
 ---
 
 ## 6. Contract template library
@@ -228,38 +241,40 @@ flowchart LR
     subgraph Actions
         A1[splitter]
         A2[streamer]
-        A3[swapper]
-        A4[yield]
+        A3[payer]
+        A4[swapper]
+        A5[yield]
     end
     Triggers --> Conditions --> Actions
 ```
 
-The composition is mental, not architectural — each crate is a standalone Soroban contract. The grouping reflects the role each plays in a real-world flow: something fires (trigger), optionally we check whether to act (condition), then funds move (action).
+The composition is **literal**, not just mental — `Deployment.pipelineSnapshot` (see §5.4) records the chain of `(nodeId, contractAddress, templateKind)` entries that compose the user's flow, and each entry is a standalone Soroban contract instance with constructor parameters wired to its upstream neighbour. The grouping into trigger / condition / action mirrors the role each contract plays in a real-world workflow: something fires, optionally we check whether to act, then funds move.
 
 ### Status of each crate
 
-All 13 crates listed below have Rust source under `contracts/`, compile with `soroban-sdk = 26.0.0` to `wasm32v1-none`, and have inline Rust unit tests (`cargo test --workspace`).
+All 14 crates listed below have Rust source under `contracts/`, compile with `soroban-sdk = 26.0.0` to `wasm32v1-none`, and have inline Rust unit tests (`cargo test --workspace`).
 
 **Status reflects how exposed each template is through the Paiflow builder UI and deploy pipeline**, not the maturity of the underlying contract code:
 
 - **Shipped (v1)** — surfaced in the builder, deployable end-to-end through the app, has a live event decoder for the feed.
 - **In design** — Rust crate exists and is tested; builder support and the full deploy/feed pipeline are being wired through incrementally.
 
-| Family    | Template        | Status     | Purpose                                                                                       |
-| --------- | --------------- | ---------- | --------------------------------------------------------------------------------------------- |
-| Action    | **splitter**    | Shipped    | Atomic BPS-weighted fan-out across N recipients. The canonical 60/30/10 case.                 |
-| Action    | **streamer**    | Shipped    | Time-based linear vesting / streaming. Recipients claim accrued balance.                      |
-| Condition | **conditional** | Shipped    | Release-on-condition escrow. Time, amount, or oracle gates.                                   |
-| Trigger   | deposit_trigger | In design  | Fires the downstream chain when a deposit lands above a threshold.                            |
-| Trigger   | webhook         | In design  | HTTP-callable trigger that emits an on-chain event recordable by Paiflow's feed.              |
-| Trigger   | subscription    | In design  | Recurring pull, opt-in by the payer, with grace-period handling.                              |
-| Trigger   | oracle          | In design  | Reads a price / data feed to gate downstream conditions.                                      |
-| Condition | router          | In design  | Branches to one of N downstream actions based on input shape.                                 |
-| Condition | timelock        | In design  | Delays the downstream action by a configurable duration.                                      |
-| Condition | multisig        | In design  | Requires N-of-M approvals from a configured signer set.                                       |
-| Action    | swapper         | In design  | Routes through Stellar DEX / SDEX or AMM to convert assets before action.                     |
-| Action    | yield           | In design  | Deposits idle balance into a yield primitive (research-stage; integration partner TBD).       |
-| Factory   | factory         | Scaffolded | Single-tx deploy + initialise pattern that other templates will register against (in design). |
+| Family    | Template        | Status     | Purpose                                                                                                                      |
+| --------- | --------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Action    | **splitter**    | Shipped    | Atomic BPS-weighted fan-out across N recipients. The canonical 60/30/10 case.                                                |
+| Action    | **streamer**    | Shipped    | Time-based linear vesting / streaming. Recipients claim accrued balance.                                                     |
+| Action    | **payer**       | Shipped    | Pays a configured recipient. Two amount modes: **fixed amount** (exact stroops) or **percentage** of the contract's balance. |
+| Condition | **conditional** | Shipped    | Release-on-condition escrow. `amount_gt` / `amount_lt`, `time_after` / `time_before`, oracle-attested gates.                 |
+| Condition | **timelock**    | Shipped    | Delays the downstream action until a wall-clock time. Auto-released via the optional relayer cron (see §5.7).                |
+| Trigger   | deposit_trigger | In design  | Fires the downstream chain when a deposit lands above a threshold.                                                           |
+| Trigger   | webhook         | In design  | HTTP-callable trigger that emits an on-chain event recordable by Paiflow's feed.                                             |
+| Trigger   | subscription    | In design  | Recurring pull, opt-in by the payer, with grace-period handling.                                                             |
+| Trigger   | oracle          | In design  | Reads a price / data feed to gate downstream conditions.                                                                     |
+| Condition | router          | In design  | Branches to one of N downstream actions based on input shape.                                                                |
+| Condition | multisig        | In design  | Requires N-of-M approvals from a configured signer set.                                                                      |
+| Action    | swapper         | In design  | Routes through Stellar DEX / SDEX or AMM to convert assets before action.                                                    |
+| Action    | yield           | In design  | Deposits idle balance into a yield primitive (research-stage; integration partner TBD).                                      |
+| Factory   | factory         | Scaffolded | Single-tx deploy + initialise pattern that other templates will register against (in design).                                |
 
 ### Why three families that compose
 
@@ -267,7 +282,7 @@ The three-family split mirrors how operators actually describe what they want. "
 
 ### Audit posture
 
-Every contract crate is open source under MIT, lives in the same repo as the application, and has inline Rust unit tests run by CI on every push (`cargo fmt --all --check`, `cargo clippy --all-targets -D warnings`, `cargo test --workspace`). The hardened, deploy-surfaced templates (splitter, streamer, conditional) are the v1 audit target. A formal third-party audit pass is a near-term roadmap item; until that lands, treat the v1 templates as "open-source, unit-tested, reviewed by the team" rather than "third-party audited."
+Every contract crate is open source under MIT, lives in the same repo as the application, and has inline Rust unit tests run by CI on every push (`cargo fmt --all --check`, `cargo clippy --all-targets -D warnings`, `cargo test --workspace`). The hardened, deploy-surfaced templates (splitter, streamer, payer, conditional, timelock) are the v1 audit target. A formal third-party audit pass is a near-term roadmap item; until that lands, treat the v1 templates as "open-source, unit-tested, reviewed by the team" rather than "third-party audited."
 
 The `factory` crate is the planned single-tx deploy-and-initialise pattern that will let the application instantiate any registered template through one Soroban call. It's scaffolded in the workspace; full integration is in design.
 
@@ -306,20 +321,32 @@ The Raft Log endpoints sit behind the same auth, rate-limit, and audit-log disci
 
 ## 8. Security and trust model
 
-The product's security story has three pillars: **key custody** (none), **app auth** (defence in depth), and **public-endpoint hardening** (rate-limit + audit-log everywhere).
+The product's security story has three pillars: **key custody** (none for user funds; one scoped application key for automated timelock releases — see below), **app auth** (defence in depth), and **public-endpoint hardening** (rate-limit + audit-log everywhere).
 
 ### 8.1 Key custody
 
-**Paiflow never sees a Stellar secret key.** Not in the database, not in environment variables, not in logs, not in transit. The single rule, repeated in `AGENT.md` for every coding agent that touches the codebase: _the backend may build and submit transactions, but never signs them._
+**For user funds, Paiflow never sees a Stellar secret key.** Not in the database, not in environment variables, not in logs, not in transit. The rule, repeated in `AGENT.md` for every coding agent that touches the codebase: _the backend may build and submit transactions, but never signs user transactions._
 
-Concretely:
+Concretely, for every operator-initiated and audience-initiated flow:
 
-- Every Soroban transaction is constructed and simulated server-side, then handed to the operator's wallet as an unsigned XDR.
+- Every Soroban transaction is constructed and simulated server-side, then handed to the user's wallet as an unsigned XDR.
 - The wallet signs locally (in a browser extension or a hardware-backed module, depending on which wallet).
 - The signed XDR comes back to the backend, which submits it via Soroban RPC.
-- If a code path that handles `secretKey` ever appears in a PR, it is rejected on review.
+- If a code path that signs on behalf of a _user_ ever appears in a PR, it is rejected on review.
 
 This means: if the Paiflow application is breached tomorrow, the attacker cannot move user funds. They can prepare malicious XDR for the next user to deploy, but the wallet would surface the contract address and parameters before signing — the user is the last line of defence and they actually see what they're signing.
+
+#### The one exception: the relayer
+
+The product needs to call `release_by_relayer()` on timelock contracts after a wall-clock event passes, with no user at the keyboard (see §5.7). To do that without faking custody, Paiflow optionally holds **one** Stellar account — the **relayer** — configured via `STELLAR_RELAYER_SECRET_KEY`. This is honest about what it is:
+
+- **One key, one purpose.** The relayer key signs only `release_by_relayer()` invocations against timelock contracts that recorded its address at construction. No other call. No other contract type.
+- **The contract enforces the scope.** Authorisation is gated by the Soroban contract itself (`require_auth` against the stored relayer address). The relayer cannot transfer arbitrary funds, change recipients, or call any other contract function. A breach of the relayer key lets the attacker release a timelock _to the recipient already configured at deploy time_ — i.e. they can grief by triggering an early release that would have happened later anyway. They cannot redirect funds.
+- **Opt-in per deployment.** A user who doesn't want a relayer can deploy the same template with the admin address as the relayer; the cron walks past those without action.
+- **Opt-out per environment.** When `STELLAR_RELAYER_SECRET_KEY` is unset, the cron returns early and no relayer transaction is ever built or signed.
+- **Standard key hygiene.** The relayer key is treated as a Railway secret (env var, never logged), funded with just enough XLM to pay fees, and rotatable (deploy contracts with a new relayer address, decommission the old).
+
+We chose this over a fully trustless alternative (e.g. user-paid `release()` calls) because timelock's whole value proposition is "I don't have to remember to claim." A trustless `release()` re-introduces the operational burden the contract was meant to remove.
 
 ### 8.2 App auth
 
@@ -459,7 +486,17 @@ External contributions are welcome. The repo's branching model is documented in 
 
 ### Pitch deck
 
-A short visual companion to this whitepaper lives at [`docs/PinkRaft-PitchDeck.pdf`](../PinkRaft-PitchDeck.pdf) (Paiflow-rebranded successor pending).
+A short visual companion to this whitepaper lives in two forms:
+
+- [`docs/pitch-deck.md`](../pitch-deck.md) — the current MARP-based investor deck (Markdown-source, renderable as slides via [Marp](https://marp.app/)).
+- [`docs/PinkRaft-PitchDeck.pdf`](../PinkRaft-PitchDeck.pdf) — the previous Pink Raft-branded PDF, retained for archival reference until the rebrand fully lands.
+
+### Living changelog
+
+This whitepaper is versioned with the code. Substantive edits since the first draft:
+
+- **v0.1 r2** — added §5.7 (relayer + cron auto-release path), §6 promoted `payer` and `timelock` to shipped (so v1 set is now splitter / streamer / payer / conditional / timelock), §8.1 rewritten to be honest about the optional relayer key and the contract-enforced scope that limits its blast radius, multi-contract pipeline framing added to §5.4 (`pipelineSnapshot`), and the §6 mermaid family diagram now includes `payer`.
+- **v0.1 r1** — initial draft.
 
 ---
 
