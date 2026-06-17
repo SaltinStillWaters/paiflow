@@ -4,6 +4,8 @@ import { useState, useRef, useCallback } from "react";
 import { toast } from "sonner";
 import { usePollTxStatus } from "@/lib/hooks/use-poll-tx-status";
 import { getWalletKit } from "./wallet-kit";
+import WalletPicker from "./wallet-picker";
+import { getSeamlessWallet } from "@/lib/wallet/seamless";
 
 type ContractCallButtonProps = {
   deploymentId: string;
@@ -33,6 +35,7 @@ export default function ContractCallButton({
   onSuccess,
 }: ContractCallButtonProps) {
   const [busy, setBusy] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const pollTxStatus = usePollTxStatus();
 
@@ -46,81 +49,124 @@ export default function ContractCallButton({
   const sizeClass =
     size === "sm" ? "text-label-sm px-3 py-1.5 gap-1.5" : "text-label-md px-4 py-2.5 gap-2";
 
-  const handleClick = useCallback(async () => {
+  const handleClick = useCallback(() => {
     if (busy || disabled) return;
-    abortRef.current?.abort();
-    abortRef.current = new AbortController();
-    setBusy(true);
+    setShowPicker(true);
+  }, [busy, disabled]);
 
-    try {
-      const { kit } = await getWalletKit(network);
+  const handlePickWallet = useCallback(
+    async (mode: "seamless" | "extension") => {
+      setShowPicker(false);
+      abortRef.current?.abort();
+      abortRef.current = new AbortController();
+      setBusy(true);
 
-      await kit.openModal({
-        onWalletSelected: async (wallet: { id: string; name: string }) => {
-          try {
-            toast.info(`Selected wallet: ${wallet.name}`);
-            kit.setWallet(wallet.id);
+      if (mode === "seamless") {
+        try {
+          toast.info("Touch your passkey to connect wallet…");
+          const wallet = await getSeamlessWallet();
+          toast.success(`Passkey wallet: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`);
 
-            const { address } = await kit.getAddress();
-            toast.success(`Connected: ${address.slice(0, 6)}...${address.slice(-4)}`);
+          toast.info("Preparing transaction…");
+          const { xdr, networkPassphrase } = await prepare(wallet.address);
 
-            toast.info("Preparing transaction...");
-            const { xdr, networkPassphrase } = await prepare(address);
+          toast.info("Signing transaction…");
+          const signedXdr = await wallet.signTransaction(xdr, networkPassphrase);
 
-            toast.info("Awaiting signature...");
-            const signed = await kit.signTransaction(xdr, {
-              address,
-              networkPassphrase,
-            });
+          toast.info("Submitting transaction…");
+          const { txHash } = await submit(signedXdr);
 
-            toast.info("Submitting transaction...");
-            const { txHash } = await submit(signed.signedTxXdr);
-
-            toast.info("Transaction submitted. Waiting for confirmation...");
-            const outcome = await pollTxStatus(deploymentId, txHash, abortRef.current!.signal);
-            if (outcome.status === "SUCCESS") {
-              toast.success("Transaction confirmed!");
-              onSuccess?.();
-            } else {
-              throw new Error(outcome.errorMessage ?? "Transaction failed on the network");
-            }
-          } catch (err) {
-            toast.error((err as Error).message ?? "Transaction failed");
-          } finally {
-            setBusy(false);
+          toast.info("Transaction submitted. Waiting for confirmation…");
+          const outcome = await pollTxStatus(deploymentId, txHash, abortRef.current!.signal);
+          if (outcome.status === "SUCCESS") {
+            toast.success("Transaction confirmed!");
+            onSuccess?.();
+          } else {
+            throw new Error(outcome.errorMessage ?? "Transaction failed on the network");
           }
-        },
-        onClosed: () => {
-          toast.warning("Connection cancelled");
-          abortRef.current?.abort();
+        } catch (err) {
+          toast.error((err as Error).message ?? "Transaction failed");
+        } finally {
           setBusy(false);
-        },
-      });
-    } catch (err) {
-      toast.error((err as Error).message ?? "Connection failed");
-      setBusy(false);
-    }
-  }, [busy, deploymentId, network, prepare, submit, onSuccess]);
+        }
+      } else {
+        try {
+          const { kit } = await getWalletKit(network);
+
+          await kit.openModal({
+            onWalletSelected: async (wallet: { id: string; name: string }) => {
+              try {
+                toast.info(`Selected wallet: ${wallet.name}`);
+                kit.setWallet(wallet.id);
+
+                const { address } = await kit.getAddress();
+                toast.success(`Connected: ${address.slice(0, 6)}...${address.slice(-4)}`);
+
+                toast.info("Preparing transaction...");
+                const { xdr, networkPassphrase } = await prepare(address);
+
+                toast.info("Awaiting signature...");
+                const signed = await kit.signTransaction(xdr, {
+                  address,
+                  networkPassphrase,
+                });
+
+                toast.info("Submitting transaction...");
+                const { txHash } = await submit(signed.signedTxXdr);
+
+                toast.info("Transaction submitted. Waiting for confirmation...");
+                const outcome = await pollTxStatus(deploymentId, txHash, abortRef.current!.signal);
+                if (outcome.status === "SUCCESS") {
+                  toast.success("Transaction confirmed!");
+                  onSuccess?.();
+                } else {
+                  throw new Error(outcome.errorMessage ?? "Transaction failed on the network");
+                }
+              } catch (err) {
+                toast.error((err as Error).message ?? "Transaction failed");
+              } finally {
+                setBusy(false);
+              }
+            },
+            onClosed: () => {
+              toast.warning("Connection cancelled");
+              abortRef.current?.abort();
+              setBusy(false);
+            },
+          });
+        } catch (err) {
+          toast.error((err as Error).message ?? "Connection failed");
+          setBusy(false);
+        }
+      }
+    },
+    [deploymentId, network, prepare, submit, onSuccess, pollTxStatus],
+  );
 
   return (
-    <button
-      onClick={handleClick}
-      disabled={busy || disabled}
-      className={`${variantClass} ${sizeClass} inline-flex items-center justify-center rounded-lg font-mono font-bold transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none`}
-    >
-      {busy ? (
-        <>
-          <span className="material-symbols-outlined animate-spin text-[16px]">
-            progress_activity
-          </span>
-          {busyLabel}
-        </>
-      ) : (
-        <>
-          <span className="material-symbols-outlined text-[16px]">{icon}</span>
-          {label}
-        </>
+    <>
+      {showPicker && (
+        <WalletPicker onPick={handlePickWallet} onCancel={() => setShowPicker(false)} />
       )}
-    </button>
+      <button
+        onClick={handleClick}
+        disabled={busy || disabled}
+        className={`${variantClass} ${sizeClass} inline-flex items-center justify-center rounded-lg font-mono font-bold transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none`}
+      >
+        {busy ? (
+          <>
+            <span className="material-symbols-outlined animate-spin text-[16px]">
+              progress_activity
+            </span>
+            {busyLabel}
+          </>
+        ) : (
+          <>
+            <span className="material-symbols-outlined text-[16px]">{icon}</span>
+            {label}
+          </>
+        )}
+      </button>
+    </>
   );
 }
