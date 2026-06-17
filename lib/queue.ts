@@ -7,7 +7,6 @@ import { log } from "@/lib/log";
 export const POLL_DEPLOYMENT_EVENTS_QUEUE = "poll-deployment-events";
 
 let queue: Queue | null | undefined;
-let connection: Redis | null | undefined;
 
 function createBullRedisConnection(): Redis | null {
   const url = env().REDIS_URL;
