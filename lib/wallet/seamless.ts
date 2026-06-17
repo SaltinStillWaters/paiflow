@@ -7,10 +7,13 @@ const PRF_EVAL_SALT = new TextEncoder().encode("pinkraft-stellar-wallet-v1");
 // HKDF salt is separate so HKDF context is distinct from the PRF eval context.
 const HKDF_SALT = new TextEncoder().encode("pinkraft-stellar-keypair-v1");
 
-function base64urlToBytes(b64url: string): Uint8Array {
+function base64urlToBytes(b64url: string): Uint8Array<ArrayBuffer> {
   const base64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
-  return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+  const binary = atob(padded);
+  const result = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) result[i] = binary.charCodeAt(i);
+  return result;
 }
 
 async function deriveKeypair(prfOutput: ArrayBuffer): Promise<Keypair> {
