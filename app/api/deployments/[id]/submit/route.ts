@@ -5,10 +5,14 @@ import { db } from "@/lib/db";
 import { requireSession } from "@/lib/auth";
 import { AppError, withErrorHandler } from "@/lib/errors";
 import { audit } from "@/lib/audit";
+import { redis, eventChannel } from "@/lib/redis";
 import { submitDeployTx } from "@/lib/stellar/deploy";
 import { scheduleTimelockReleaseJob } from "@/lib/timelock-jobs";
+import { stellarRelayerAddress } from "@/lib/env";
+import { ChargeRelayerMode } from "@prisma/client";
+import { scheduleNextStreamerClaimJob } from "@/lib/streamer-jobs";
 import { log } from "@/lib/log";
-import type { TimelockNodeParams } from "@/lib/flows/to-params";
+import type { TimelockNodeParams, StreamerParams } from "@/lib/flows/to-params";
 
 const SubmitSchema = z.object({ signedXdr: z.string().min(10).max(200_000) });
 
@@ -20,6 +24,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     const deployment = await db.deployment.findFirst({
       where: { id, ownerId: user.id },
+      include: { flow: { select: { templateKind: true } } },
     });
     if (!deployment) throw new AppError("NOT_FOUND", "Deployment not found");
     if (deployment.status !== "PENDING_SIGNATURE") {
@@ -52,6 +57,42 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         ? `whsec_${crypto.randomBytes(32).toString("hex")}`
         : null;
 
+      const isSubscription = deployment.flow?.templateKind === "SUBSCRIPTION";
+      const subscriptionSchedule: {
+        chargeRelayerMode?: ChargeRelayerMode;
+        chargeRelayerAddress?: string | null;
+        nextChargeAt?: Date | null;
+        chargeEndAt?: Date | null;
+      } = {};
+      if (isSubscription) {
+        const paramsPipeline = deployment.paramsSnapshot as Array<{
+          nodeId: string;
+          templateKind: string;
+          params: Record<string, unknown>;
+        }> | null;
+        const subNode = paramsPipeline?.find((n) => n.templateKind === "SUBSCRIPTION");
+        const streamerNode = paramsPipeline?.find((n) => n.templateKind === "STREAMER");
+        const relayer =
+          typeof subNode?.params?.relayer === "string" ? subNode.params.relayer : null;
+        const startTs =
+          typeof subNode?.params?.startTs === "number"
+            ? subNode.params.startTs
+            : Math.floor(Date.now() / 1000);
+        const platformRelayer = stellarRelayerAddress();
+        subscriptionSchedule.chargeRelayerMode =
+          platformRelayer && relayer === platformRelayer
+            ? ChargeRelayerMode.PLATFORM
+            : ChargeRelayerMode.MANUAL;
+        subscriptionSchedule.chargeRelayerAddress = relayer;
+        subscriptionSchedule.nextChargeAt = new Date(
+          Math.max(startTs, Math.floor(Date.now() / 1000)) * 1000,
+        );
+        subscriptionSchedule.chargeEndAt =
+          typeof streamerNode?.params?.endTs === "number"
+            ? new Date(streamerNode.params.endTs * 1000)
+            : null;
+      }
+
       await db.deployment.update({
         where: { id },
         data: {
@@ -60,46 +101,77 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           contractAddress,
           confirmedAt: new Date(),
           ...(webhookSecret ? { webhookSecret } : {}),
+          ...subscriptionSchedule,
         },
       });
 
-      // Schedule a release job for each TIMELOCK node so the relayer can
-      // auto-release funds at the configured time instead of scanning every
-      // deployment on a fixed interval.
       const paramsSnapshot = deployment.paramsSnapshot as Array<{
         nodeId: string;
         templateKind: string;
-        params: { kind: string } | TimelockNodeParams;
+        params: { kind: string } | TimelockNodeParams | StreamerParams;
       }> | null;
 
       if (paramsSnapshot) {
         for (const node of paramsSnapshot) {
-          if (node.templateKind !== "TIMELOCK" || node.params.kind !== "timelock") {
-            continue;
-          }
           const pipelineNode = pipeline?.find((p) => p.nodeId === node.nodeId);
           if (!pipelineNode?.contractAddress) continue;
 
-          try {
-            await scheduleTimelockReleaseJob(
-              db,
-              id,
-              node.nodeId,
-              pipelineNode.contractAddress,
-              node.params as TimelockNodeParams,
-            );
-          } catch (scheduleErr) {
-            log.warn(
-              {
-                deploymentId: id,
-                nodeId: node.nodeId,
-                contractAddress: pipelineNode.contractAddress,
-                error: scheduleErr instanceof Error ? scheduleErr.message : String(scheduleErr),
-              },
-              "Failed to schedule initial timelock release job",
-            );
+          if (node.templateKind === "TIMELOCK" && node.params.kind === "timelock") {
+            try {
+              await scheduleTimelockReleaseJob(
+                db,
+                id,
+                node.nodeId,
+                pipelineNode.contractAddress,
+                node.params as TimelockNodeParams,
+              );
+            } catch (scheduleErr) {
+              log.warn(
+                {
+                  deploymentId: id,
+                  nodeId: node.nodeId,
+                  contractAddress: pipelineNode.contractAddress,
+                  error: scheduleErr instanceof Error ? scheduleErr.message : String(scheduleErr),
+                },
+                "Failed to schedule initial timelock release job",
+              );
+            }
+          }
+
+          if (node.templateKind === "STREAMER" && node.params.kind === "streamer") {
+            try {
+              await scheduleNextStreamerClaimJob(
+                db,
+                id,
+                node.nodeId,
+                pipelineNode.contractAddress,
+                node.params as StreamerParams,
+              );
+            } catch (scheduleErr) {
+              log.warn(
+                {
+                  deploymentId: id,
+                  nodeId: node.nodeId,
+                  contractAddress: pipelineNode.contractAddress,
+                  error: scheduleErr instanceof Error ? scheduleErr.message : String(scheduleErr),
+                },
+                "Failed to schedule initial streamer claim job",
+              );
+            }
           }
         }
+      }
+
+      const redisClient = redis();
+      if (redisClient) {
+        redisClient
+          .publish(
+            eventChannel(id),
+            JSON.stringify({ type: "status", status: "CONFIRMED", deploymentId: id }),
+          )
+          .catch(() => {
+            // Fire-and-forget: the client still polls as a fallback.
+          });
       }
 
       await audit({

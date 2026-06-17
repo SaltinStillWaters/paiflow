@@ -22,11 +22,11 @@ schedule = "*/2 * * * *"
 command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/finalize-deployments || true"
 
 [[deploy.cron]]
-name = "auto-claim-streamers"
-schedule = "*/5 * * * *"
-command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/auto-claim-streamers || true"
-
-[[deploy.cron]]
 name = "process-timelock-jobs"
 schedule = "* * * * *"
 command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/process-timelock-jobs || true"
+
+[[deploy.cron]]
+name = "process-streamer-jobs"
+schedule = "* * * * *"
+command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/process-streamer-jobs || true"
