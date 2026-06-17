@@ -51,6 +51,15 @@ enum EventKind {
   RETRIEVE
 }
 
+enum TimelockReleaseJobStatus {
+  PENDING
+  RUNNING
+  RELEASED
+  SKIPPED
+  FAILED
+  CANCELLED
+}
+
 model User {
   id           String       @id @default(uuid()) @db.Uuid
   username     String       @unique
@@ -179,9 +188,30 @@ model Deployment {
   owner  User            @relation(fields: [ownerId], references: [id], onDelete: Restrict)
   events ContractEvent[]
   cursor EventCursor?
+  timelockReleaseJobs TimelockReleaseJob[]
 
   @@index([ownerId, createdAt(sort: Desc)])
   @@index([status])
+}
+
+model TimelockReleaseJob {
+  id              String                 @id @default(uuid()) @db.Uuid
+  deploymentId    String                 @db.Uuid
+  nodeId          String
+  contractAddress String
+  runAt           DateTime
+  status          TimelockReleaseJobStatus @default(PENDING)
+  attemptCount    Int                    @default(0)
+  lastError       String?
+  releasedAt      DateTime?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  deployment Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAt])
+  @@index([deploymentId, nodeId, status])
+  @@index([contractAddress, status])
 }
 
 model ContractEvent {

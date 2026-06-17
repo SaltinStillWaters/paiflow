@@ -6,6 +6,9 @@ import { requireSession } from "@/lib/auth";
 import { AppError, withErrorHandler } from "@/lib/errors";
 import { audit } from "@/lib/audit";
 import { submitDeployTx } from "@/lib/stellar/deploy";
+import { scheduleTimelockReleaseJob } from "@/lib/timelock-jobs";
+import { log } from "@/lib/log";
+import type { TimelockNodeParams } from "@/lib/flows/to-params";
 
 const SubmitSchema = z.object({ signedXdr: z.string().min(10).max(200_000) });
 
@@ -59,6 +62,46 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           ...(webhookSecret ? { webhookSecret } : {}),
         },
       });
+
+      // Schedule a release job for each TIMELOCK node so the relayer can
+      // auto-release funds at the configured time instead of scanning every
+      // deployment on a fixed interval.
+      const paramsSnapshot = deployment.paramsSnapshot as Array<{
+        nodeId: string;
+        templateKind: string;
+        params: { kind: string } | TimelockNodeParams;
+      }> | null;
+
+      if (paramsSnapshot) {
+        for (const node of paramsSnapshot) {
+          if (node.templateKind !== "TIMELOCK" || node.params.kind !== "timelock") {
+            continue;
+          }
+          const pipelineNode = pipeline?.find((p) => p.nodeId === node.nodeId);
+          if (!pipelineNode?.contractAddress) continue;
+
+          try {
+            await scheduleTimelockReleaseJob(
+              db,
+              id,
+              node.nodeId,
+              pipelineNode.contractAddress,
+              node.params as TimelockNodeParams,
+            );
+          } catch (scheduleErr) {
+            log.warn(
+              {
+                deploymentId: id,
+                nodeId: node.nodeId,
+                contractAddress: pipelineNode.contractAddress,
+                error: scheduleErr instanceof Error ? scheduleErr.message : String(scheduleErr),
+              },
+              "Failed to schedule initial timelock release job",
+            );
+          }
+        }
+      }
+
       await audit({
         action: "DEPLOY_CONFIRM",
         userId: user.id,
