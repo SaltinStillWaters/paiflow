@@ -7,6 +7,7 @@ import {
   getDueTimelockJobs,
   rescheduleTimelockJob,
   cancelPendingTimelockJobs,
+  resetStaleRunningTimelockJobs,
 } from "@/lib/timelock-jobs";
 
 describe("computeTimelockRunAt", () => {
@@ -300,5 +301,110 @@ describe("cancelPendingTimelockJobs", () => {
     expect(statuses.get("p1")).toBe(TimelockReleaseJobStatus.CANCELLED);
     expect(statuses.get("r1")).toBe(TimelockReleaseJobStatus.CANCELLED);
     expect(statuses.get("c1")).toBe(TimelockReleaseJobStatus.RELEASED);
+  });
+});
+
+describe("resetStaleRunningTimelockJobs", () => {
+  beforeEach(async () => {
+    await db.timelockReleaseJob.deleteMany();
+    await db.deployment.deleteMany();
+    await db.flow.deleteMany();
+    await db.user.deleteMany();
+  });
+
+  afterEach(async () => {
+    await db.timelockReleaseJob.deleteMany();
+    await db.deployment.deleteMany();
+    await db.flow.deleteMany();
+    await db.user.deleteMany();
+  });
+
+  async function makeDeployment() {
+    const user = await db.user.create({
+      data: {
+        username: `test-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        passwordHash: "hash",
+      },
+    });
+    const flow = await db.flow.create({
+      data: {
+        ownerId: user.id,
+        name: "test",
+        templateKind: "TIMELOCK",
+        graph: {},
+        parameters: {},
+      },
+    });
+    return db.deployment.create({
+      data: {
+        flowId: flow.id,
+        ownerId: user.id,
+        network: "testnet",
+        status: "CONFIRMED",
+        graphSnapshot: {},
+        paramsSnapshot: {},
+      },
+    });
+  }
+
+  it("resets stale RUNNING jobs back to PENDING", async () => {
+    const deployment = await makeDeployment();
+    const now = new Date();
+    const stale = new Date(now.getTime() - 11 * 60 * 1_000);
+
+    const job = await db.timelockReleaseJob.create({
+      data: {
+        deploymentId: deployment.id,
+        nodeId: "stale",
+        contractAddress: "C1",
+        runAt: new Date(now.getTime() - 60_000),
+        status: TimelockReleaseJobStatus.RUNNING,
+        updatedAt: stale,
+      },
+    });
+
+    await db.timelockReleaseJob.create({
+      data: {
+        deploymentId: deployment.id,
+        nodeId: "fresh",
+        contractAddress: "C2",
+        runAt: new Date(now.getTime() - 60_000),
+        status: TimelockReleaseJobStatus.RUNNING,
+        updatedAt: now,
+      },
+    });
+
+    await db.timelockReleaseJob.create({
+      data: {
+        deploymentId: deployment.id,
+        nodeId: "pending",
+        contractAddress: "C3",
+        runAt: new Date(now.getTime() - 60_000),
+        status: TimelockReleaseJobStatus.PENDING,
+        updatedAt: stale,
+      },
+    });
+
+    const count = await resetStaleRunningTimelockJobs(db);
+    expect(count).toBe(1);
+
+    const updated = await db.timelockReleaseJob.findUnique({ where: { id: job.id } });
+    expect(updated!.status).toBe(TimelockReleaseJobStatus.PENDING);
+    expect(updated!.lastError).toBe("Reset from stale RUNNING state");
+
+    const fresh = await db.timelockReleaseJob.findFirst({
+      where: { deploymentId: deployment.id, nodeId: "fresh" },
+    });
+    expect(fresh!.status).toBe(TimelockReleaseJobStatus.RUNNING);
+
+    const pending = await db.timelockReleaseJob.findFirst({
+      where: { deploymentId: deployment.id, nodeId: "pending" },
+    });
+    expect(pending!.status).toBe(TimelockReleaseJobStatus.PENDING);
+  });
+
+  it("returns zero when there are no stale RUNNING jobs", async () => {
+    const count = await resetStaleRunningTimelockJobs(db);
+    expect(count).toBe(0);
   });
 });

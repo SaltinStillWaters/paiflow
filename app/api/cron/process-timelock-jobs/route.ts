@@ -10,6 +10,7 @@ import {
   cancelPendingTimelockJobs,
   getDueTimelockJobs,
   rescheduleTimelockJob,
+  resetStaleRunningTimelockJobs,
 } from "@/lib/timelock-jobs";
 
 export const dynamic = "force-dynamic";
@@ -37,12 +38,29 @@ function isKnownSkipError(message: string): boolean {
   );
 }
 
+async function scheduleRetry(jobId: string, attemptCount: number, errorMessage: string) {
+  const retryAt = new Date(Date.now() + 60_000 * (attemptCount + 1));
+  await db.timelockReleaseJob.update({
+    where: { id: jobId },
+    data: {
+      status: TimelockReleaseJobStatus.PENDING,
+      runAt: retryAt,
+      lastError: errorMessage,
+      attemptCount: { increment: 1 },
+    },
+  });
+}
+
 export async function POST(req: NextRequest) {
   return withErrorHandler(async () => {
     const secret = env().CRON_SECRET;
     if (secret && req.headers.get("x-cron-secret") !== secret) {
       throw new AppError("FORBIDDEN", "Bad cron secret");
     }
+
+    // Recover from any previous cron invocation that crashed or timed out while
+    // a job was in RUNNING. A 10-minute timeout is generous for a Stellar TX.
+    await resetStaleRunningTimelockJobs(db);
 
     const jobs = await getDueTimelockJobs(db, 50);
     const results: Array<{
@@ -101,16 +119,7 @@ export async function POST(req: NextRequest) {
         } else {
           const errorMessage = submit.errorMessage ?? "Submission failed";
           if (isRetryableError(errorMessage) && job.attemptCount < MAX_RETRY_ATTEMPTS) {
-            const retryAt = new Date(Date.now() + 60_000 * (job.attemptCount + 1));
-            await db.timelockReleaseJob.update({
-              where: { id: job.id },
-              data: {
-                status: TimelockReleaseJobStatus.PENDING,
-                runAt: retryAt,
-                lastError: errorMessage,
-                attemptCount: { increment: 1 },
-              },
-            });
+            await scheduleRetry(job.id, job.attemptCount, errorMessage);
           } else {
             await rescheduleTimelockJob(db, job.id, {
               status: TimelockReleaseJobStatus.FAILED,
@@ -138,16 +147,7 @@ export async function POST(req: NextRequest) {
             status: "skipped",
           });
         } else if (isRetryableError(message) && job.attemptCount < MAX_RETRY_ATTEMPTS) {
-          const retryAt = new Date(Date.now() + 60_000 * (job.attemptCount + 1));
-          await db.timelockReleaseJob.update({
-            where: { id: job.id },
-            data: {
-              status: TimelockReleaseJobStatus.PENDING,
-              runAt: retryAt,
-              lastError: message,
-              attemptCount: { increment: 1 },
-            },
-          });
+          await scheduleRetry(job.id, job.attemptCount, message);
           results.push({
             jobId: job.id,
             contractAddress: job.contractAddress,

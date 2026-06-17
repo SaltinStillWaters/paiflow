@@ -13,6 +13,13 @@ const TERMINAL_STATUSES: TimelockReleaseJobStatus[] = [
 const BEFORE_MODE_BUFFER_MS = 60_000;
 
 /**
+ * How long a RUNNING job can stay unupdated before we assume the previous cron
+ * invocation crashed or was killed. After this timeout the cron handler resets
+ * the job back to PENDING so it can be retried.
+ */
+export const STALE_RUNNING_JOB_TIMEOUT_MS = 10 * 60 * 1_000;
+
+/**
  * Compute the initial runAt for a timelock release job.
  *
  * - After mode: release at or after unlockTime. If unlockTime is already in the
@@ -131,6 +138,29 @@ export async function cancelPendingTimelockJobs(
     data: {
       status: TimelockReleaseJobStatus.CANCELLED,
       lastError: "Deployment is no longer CONFIRMED",
+    },
+  });
+
+  return result.count;
+}
+
+/**
+ * Reset RUNNING jobs that have not been updated recently back to PENDING. This
+ * recovers from cron crashes, pod kills, or timeouts that occurred after a job
+ * was marked RUNNING but before it reached a terminal state.
+ */
+export async function resetStaleRunningTimelockJobs(
+  prisma: PrismaClient,
+  staleBefore: Date = new Date(Date.now() - STALE_RUNNING_JOB_TIMEOUT_MS),
+): Promise<number> {
+  const result = await prisma.timelockReleaseJob.updateMany({
+    where: {
+      status: TimelockReleaseJobStatus.RUNNING,
+      updatedAt: { lt: staleBefore },
+    },
+    data: {
+      status: TimelockReleaseJobStatus.PENDING,
+      lastError: "Reset from stale RUNNING state",
     },
   });
 
