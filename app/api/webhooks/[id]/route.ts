@@ -7,6 +7,7 @@ import { AppError, withErrorHandler } from "@/lib/errors";
 import { submitWebhookExecuteTx } from "@/lib/stellar/trigger";
 import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import { schedulePoll } from "@/lib/queue-utils";
 
 const PostSchema = z
   .object({
@@ -96,6 +97,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           escrow: body.escrow,
         },
       });
+      await schedulePoll(id, 5000, true);
       return NextResponse.json({
         data: { txHash: result.txHash, status: "PENDING" },
       });

@@ -5,6 +5,7 @@ import { AppError, withErrorHandler } from "@/lib/errors";
 import { submitTriggerTx } from "@/lib/stellar/trigger";
 import { enforceRateLimit, clientIp } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import { schedulePoll } from "@/lib/queue-utils";
 
 const SubmitSchema = z.object({ signedXdr: z.string().min(10).max(200_000) });
 
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         userId: d.ownerId,
         metadata: { deploymentId: id, txHash: result.txHash },
       });
+      await schedulePoll(id, 5000, true);
       return NextResponse.json({ data: { txHash: result.txHash, status: "PENDING" } });
     }
     if (result.status === "FAILED") {

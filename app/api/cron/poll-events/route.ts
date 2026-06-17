@@ -10,6 +10,13 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   return withErrorHandler(async () => {
+    if (env().EVENT_QUEUE_ENABLED) {
+      log.info("poll-events cron skipped: event queue is enabled");
+      return NextResponse.json({
+        data: { skipped: true, reason: "event queue is enabled" },
+      });
+    }
+
     log.info("poll-events cron started");
     const secret = env().CRON_SECRET;
     if (secret && req.headers.get("x-cron-secret") !== secret) {

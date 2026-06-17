@@ -34,6 +34,8 @@ type EnvShape = {
   CRON_SECRET: string | undefined;
   SENTRY_DSN: string | undefined;
   HIBP_CHECK_ENABLED: boolean;
+  EVENT_QUEUE_ENABLED: boolean;
+  EVENT_QUEUE_CONCURRENCY: number;
   AI_API_KEY: string | undefined;
   AI_BASE_URL: string | undefined;
   AI_MODEL: string | undefined;
@@ -82,6 +84,8 @@ function build(): EnvShape {
     CRON_SECRET: undefined,
     SENTRY_DSN: undefined,
     HIBP_CHECK_ENABLED: false,
+    EVENT_QUEUE_ENABLED: false,
+    EVENT_QUEUE_CONCURRENCY: 5,
     AI_API_KEY: undefined,
     AI_BASE_URL: undefined,
     AI_MODEL: undefined,

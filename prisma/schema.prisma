@@ -175,10 +175,11 @@ model Deployment {
   distributeAmountStroops String?
   webhookSecret   String?
 
-  flow   Flow            @relation(fields: [flowId], references: [id], onDelete: Restrict)
-  owner  User            @relation(fields: [ownerId], references: [id], onDelete: Restrict)
-  events ContractEvent[]
-  cursor EventCursor?
+  flow      Flow            @relation(fields: [flowId], references: [id], onDelete: Restrict)
+  owner     User            @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  events    ContractEvent[]
+  cursor    EventCursor?
+  pollState PollState?
 
   @@index([ownerId, createdAt(sort: Desc)])
   @@index([status])
@@ -222,6 +223,17 @@ model EventCursor {
   lastLedger      Int
   updatedAt       DateTime   @updatedAt
   deployment      Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+}
+
+model PollState {
+  deploymentId      String     @id @db.Uuid
+  backoffSeconds    Int        @default(10)
+  lastPolledAt      DateTime?
+  lastEventsFoundAt DateTime?
+  deployment        Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@index([backoffSeconds])
+  @@index([lastPolledAt])
 }
 
 model AuditLog {

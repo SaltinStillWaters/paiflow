@@ -34,6 +34,13 @@ const EnvSchema = z.object({
   DATABASE_URL: z.string().url(),
   REDIS_URL: z.string().url().optional(),
 
+  // ---- Event polling queue ----
+  // Feature flag for queue-based per-deployment event polling (issue #200).
+  // When false, the global poll-events cron handles polling.
+  EVENT_QUEUE_ENABLED: boolish,
+  // Max concurrent event-polling jobs processed by the worker service.
+  EVENT_QUEUE_CONCURRENCY: z.coerce.number().int().min(1).max(20).default(5),
+
   // Network is pinned per environment: staging/dev = testnet, prod = mainnet.
   STELLAR_NETWORK: z.enum(["testnet", "mainnet"]).default("testnet"),
   STELLAR_NETWORK_PASSPHRASE_TESTNET: z.string().default("Test SDF Network ; September 2015"),

@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth";
 import { AppError, withErrorHandler } from "@/lib/errors";
 import { audit } from "@/lib/audit";
 import { submitDeployTx } from "@/lib/stellar/deploy";
+import { schedulePoll } from "@/lib/queue-utils";
 
 const SubmitSchema = z.object({ signedXdr: z.string().min(10).max(200_000) });
 
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
           ...(webhookSecret ? { webhookSecret } : {}),
         },
       });
+      await schedulePoll(id, 5000, true);
       await audit({
         action: "DEPLOY_CONFIRM",
         userId: user.id,
