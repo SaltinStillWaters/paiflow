@@ -74,6 +74,11 @@ const KIND_META: Record<string, { label: string; color: string; icon: string }> 
     color: "border-success/30 bg-success/10 text-success",
     icon: "play_arrow",
   },
+  ALLOWANCE: {
+    label: "ALLOWANCE",
+    color: "border-success/30 bg-success/10 text-success",
+    icon: "approval",
+  },
 };
 
 const TOTAL_BPS = 10000n;
@@ -234,8 +239,10 @@ function computeRecipientShares(totalAmount: string, recipients: Recipient[]): R
   const total = BigInt(totalAmount);
   let distributed = 0n;
   return recipients.map((r, index) => {
-    if (isNonEmptyString(r.amount)) return r;
-    if (typeof r.bps !== "number") return r;
+    // Fixed-amount recipients (bps 0/undefined) carry their own amount; keep it.
+    // Percentage recipients carry bps but the on-chain `payout` event reports
+    // their amount as 0, so always derive the share from bps + total here.
+    if (typeof r.bps !== "number" || r.bps === 0) return r;
     const isLast = index === recipients.length - 1;
     const share = isLast ? total - distributed : (total * BigInt(r.bps)) / TOTAL_BPS;
     distributed += share;
@@ -349,7 +356,15 @@ function RecipientList({
   );
 }
 
-function EventDetails({ evt, graph }: { evt: Evt; graph?: FlowGraph | null }) {
+function EventDetails({
+  evt,
+  graph,
+  fallbackTotal,
+}: {
+  evt: Evt;
+  graph?: FlowGraph | null;
+  fallbackTotal?: string;
+}) {
   const d = evt.decodedData as Record<string, unknown> | null;
 
   // Status-like events have no numeric payload but should still render nicely.
@@ -452,13 +467,23 @@ function EventDetails({ evt, graph }: { evt: Evt; graph?: FlowGraph | null }) {
       const amountOut = d?.amountOut;
       const recipient = d?.recipient;
       const decodedRecipients = normalizeRecipients(d?.recipients ?? d?.addresses);
+      // The splitter's payout event has no total; recover it from the RECEIVE
+      // event in the same tx so percentage shares can be derived.
+      const effectiveTotal = isNonEmptyString(amount)
+        ? amount
+        : isNonEmptyString(fallbackTotal)
+          ? fallbackTotal
+          : undefined;
       const graphRecipients =
-        decodedRecipients.length > 0
-          ? []
-          : getGraphSplitRecipients(graph, isNonEmptyString(amount) ? amount : undefined);
+        decodedRecipients.length > 0 ? [] : getGraphSplitRecipients(graph, effectiveTotal);
       const recipients = decodedRecipients.length > 0 ? decodedRecipients : graphRecipients;
       const tookPathA = d?.tookPathA;
-      const displayAmount = isNonEmptyString(amount) ? amount : sumRecipientAmounts(recipients);
+      const shareTotal = effectiveTotal
+        ? sumRecipientAmounts(computeRecipientShares(effectiveTotal, recipients))
+        : undefined;
+      const displayAmount = isNonEmptyString(amount)
+        ? amount
+        : (effectiveTotal ?? shareTotal ?? sumRecipientAmounts(recipients));
 
       if (assetIn && assetOut && amountIn !== undefined && amountOut !== undefined) {
         return (
@@ -733,6 +758,37 @@ function EventDetails({ evt, graph }: { evt: Evt; graph?: FlowGraph | null }) {
         </div>
       );
     }
+    case "ALLOWANCE": {
+      const from = d?.from ?? d?.subscriber ?? d?.address;
+      const spender = d?.spender;
+      const amount = d?.amount;
+      const asset = d?.asset;
+
+      return (
+        <div className="space-y-2">
+          <div className="text-body-sm text-on-surface">
+            Approved{" "}
+            <span className="text-primary font-medium">{formatAmountWithAsset(amount, asset)}</span>{" "}
+            for recurring charges
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            {isNonEmptyString(from) && (
+              <DetailField label="Subscriber">
+                <AddressValue addr={from} />
+              </DetailField>
+            )}
+            {isNonEmptyString(spender) && (
+              <DetailField label="Spender">
+                <AddressValue addr={spender} />
+              </DetailField>
+            )}
+            {asset !== undefined && asset !== null && (
+              <DetailField label="Asset">{formatAsset(asset)}</DetailField>
+            )}
+          </div>
+        </div>
+      );
+    }
     case "STATUS_CHANGE": {
       const signer = d?.signer ?? d?.address;
       return (
@@ -776,10 +832,12 @@ function EventRow({
   evt,
   network,
   graph,
+  fallbackTotal,
 }: {
   evt: Evt;
   network: StellarNetwork | null;
   graph?: FlowGraph | null;
+  fallbackTotal?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const meta = KIND_META[evt.kind] ?? KIND_META["STATUS_CHANGE"]!;
@@ -853,7 +911,7 @@ function EventRow({
         </div>
       </div>
 
-      <EventDetails evt={evt} graph={graph} />
+      <EventDetails evt={evt} graph={graph} fallbackTotal={fallbackTotal} />
 
       {expanded && (
         <div className="border-outline-variant/15 space-y-2 border-t pt-2">
@@ -891,6 +949,21 @@ function EventRow({
 }
 
 export function LiveEvents({ events, network, connectionStatus = "live", graph }: LiveEventsProps) {
+  // The splitter's `payout` event carries no total amount, and in percentage
+  // mode each recipient's reported amount is 0. Recover the real total from the
+  // RECEIVE event (deposit/trigger) emitted in the same transaction.
+  const receivedByTx = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const e of events) {
+      if (e.kind !== "RECEIVE" || !e.txHash) continue;
+      const amount = (e.decodedData as Record<string, unknown> | null)?.amount;
+      if (typeof amount === "string" && amount.length > 0 && !map.has(e.txHash)) {
+        map.set(e.txHash, amount);
+      }
+    }
+    return map;
+  }, [events]);
+
   const statusLabel =
     connectionStatus === "reconnecting"
       ? "RECONNECTING"
@@ -933,6 +1006,7 @@ export function LiveEvents({ events, network, connectionStatus = "live", graph }
             evt={e}
             network={network}
             graph={graph}
+            fallbackTotal={receivedByTx.get(e.txHash)}
           />
         ))}
       </ul>
