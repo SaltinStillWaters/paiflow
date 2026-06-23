@@ -12,6 +12,7 @@ import { stellarRelayerAddress } from "@/lib/env";
 import { ChargeRelayerMode } from "@prisma/client";
 import { scheduleNextStreamerClaimJob } from "@/lib/streamer-jobs";
 import { log } from "@/lib/log";
+import { scheduleDeploymentFinalizeJob } from "@/lib/deployment-jobs";
 import type { TimelockNodeParams, StreamerParams } from "@/lib/flows/to-params";
 
 const SubmitSchema = z.object({ signedXdr: z.string().min(10).max(200_000) });
@@ -31,11 +32,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       throw new AppError("CONFLICT", `Deployment is ${deployment.status}, cannot submit`);
     }
 
+    const submittedAt = new Date();
     await db.deployment.update({
       where: { id },
-      data: { status: "SUBMITTED" },
+      data: { status: "SUBMITTED", submittedAt },
     });
     await audit({ action: "DEPLOY_SUBMIT", userId: user.id, metadata: { deploymentId: id } });
+
+    await scheduleDeploymentFinalizeJob(db, id, submittedAt);
 
     const result = await submitDeployTx(body.signedXdr);
     if (result.status === "SUCCESS") {

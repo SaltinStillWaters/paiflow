@@ -1,7 +1,7 @@
 import "server-only";
 import type { FlowGraph, FlowNode, SplitRecipient } from "./schema";
 import { assetLabel, isTrigger } from "./schema";
-import { sendEmail } from "@/lib/mail";
+import { scheduleEmailNotification } from "@/lib/email-jobs";
 import { db } from "@/lib/db";
 import { log } from "@/lib/log";
 import { formatStroops } from "@/lib/utils";
@@ -297,8 +297,8 @@ export type PipelineNodeSnapshot = {
 /**
  * For a newly persisted contract event, find any `email_notify` decorator nodes
  * attached to the graph node that owns the emitting contract, render the email
- * with context variables, and send via Resend. Results are persisted in
- * EmailNotification rows with idempotency on (event, node, recipient).
+ * with context variables, and schedule PENDING EmailNotification jobs for the
+ * worker cron to send. Idempotency is on (event, node, recipient).
  */
 export async function sendEmailNotificationsForEvent(params: {
   deploymentId: string;
@@ -354,35 +354,18 @@ export async function sendEmailNotificationsForEvent(params: {
       const ctx = buildEmailContext({ event, parentNode, graph, walletAddress: address, amount });
 
       try {
-        const exists = await db.emailNotification.findUnique({
-          where: {
-            contractEventId_nodeId_address: {
-              contractEventId,
-              nodeId: node.id,
-              address,
-            },
-          },
-        });
-        if (exists) continue;
-
         const subject = interpolateTemplate(node.config.subject, ctx);
         const body = interpolateTemplate(node.config.body, ctx);
-        const result = await sendEmail({
-          to: email,
+
+        await scheduleEmailNotification(db, {
+          deploymentId,
+          contractEventId,
+          nodeId: node.id,
+          address,
+          recipient: email,
           subject,
           html: textToHtml(body),
           text: body,
-        });
-
-        await db.emailNotification.create({
-          data: {
-            contractEventId,
-            nodeId: node.id,
-            address,
-            recipient: email,
-            status: result.ok ? "sent" : "failed",
-            error: result.ok ? null : result.error.message,
-          },
         });
       } catch (err) {
         log.warn(

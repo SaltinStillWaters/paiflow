@@ -75,6 +75,23 @@ enum TimelockReleaseJobStatus {
   CANCELLED
 }
 
+enum DeploymentFinalizeJobStatus {
+  PENDING
+  RUNNING
+  FINALIZED
+  SKIPPED
+  FAILED
+  CANCELLED
+}
+
+enum EmailNotificationStatus {
+  PENDING
+  RUNNING
+  SENT
+  FAILED
+  CANCELLED
+}
+
 model User {
   id           String       @id @default(uuid()) @db.Uuid
   username     String       @unique
@@ -193,6 +210,7 @@ model Deployment {
   paramsSnapshot  Json
   pipelineSnapshot Json?
   createdAt       DateTime         @default(now())
+  submittedAt     DateTime?
   confirmedAt     DateTime?
   unsignedXdr     String?
   sourceAccount   String?
@@ -212,6 +230,8 @@ model Deployment {
   cursor EventCursor?
   timelockReleaseJobs TimelockReleaseJob[]
   streamerClaimJobs StreamerClaimJob[]
+  deploymentFinalizeJobs DeploymentFinalizeJob[]
+  emailNotifications EmailNotification[]
 
   @@index([ownerId, createdAt(sort: Desc)])
   @@index([status])
@@ -259,6 +279,22 @@ model TimelockReleaseJob {
   @@index([contractAddress, status])
 }
 
+model DeploymentFinalizeJob {
+  id           String                    @id @default(uuid()) @db.Uuid
+  deploymentId String                    @db.Uuid
+  runAt        DateTime
+  status       DeploymentFinalizeJobStatus @default(PENDING)
+  attemptCount Int                       @default(0)
+  lastError    String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  deployment Deployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@index([status, runAt])
+  @@index([deploymentId, status])
+}
+
 model ContractEvent {
   id           String     @id @default(uuid()) @db.Uuid
   deploymentId String     @db.Uuid
@@ -277,19 +313,30 @@ model ContractEvent {
 }
 
 model EmailNotification {
-  id              String   @id @default(uuid()) @db.Uuid
-  contractEventId String   @db.Uuid
+  id              String                  @id @default(uuid()) @db.Uuid
+  deploymentId    String                  @db.Uuid
+  contractEventId String                  @db.Uuid
   nodeId          String
   address         String?
   recipient       String
-  status          String
-  error           String?
-  sentAt          DateTime @default(now())
+  subject         String?
+  html            String?
+  text            String?
+  status          EmailNotificationStatus
+  attemptCount    Int                     @default(0)
+  lastError       String?
+  runAt           DateTime
+  sentAt          DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
 
+  deployment    Deployment    @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
   contractEvent ContractEvent @relation(fields: [contractEventId], references: [id], onDelete: Cascade)
 
   @@unique([contractEventId, nodeId, address])
+  @@index([status, runAt])
   @@index([contractEventId])
+  @@index([deploymentId])
 }
 
 model EventCursor {

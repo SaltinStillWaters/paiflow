@@ -17,11 +17,6 @@ schedule = "* * * * *"
 command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/poll-events || true"
 
 [[deploy.cron]]
-name = "finalize-deployments"
-schedule = "*/2 * * * *"
-command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/finalize-deployments || true"
-
-[[deploy.cron]]
 name = "process-timelock-jobs"
 schedule = "* * * * *"
 command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/process-timelock-jobs || true"
@@ -30,3 +25,13 @@ command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC
 name = "process-streamer-jobs"
 schedule = "* * * * *"
 command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/process-streamer-jobs || true"
+
+[[deploy.cron]]
+name = "process-deployment-finalize-jobs"
+schedule = "* * * * *"
+command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/process-deployment-finalize-jobs || true"
+
+[[deploy.cron]]
+name = "send-emails"
+schedule = "* * * * *"
+command = "curl -fsSL -H \"x-cron-secret: $CRON_SECRET\" https://$RAILWAY_PUBLIC_DOMAIN/api/cron/send-emails || true"
