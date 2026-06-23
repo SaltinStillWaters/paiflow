@@ -1,11 +1,10 @@
 "use client";
 
 import { Keypair, TransactionBuilder } from "@stellar/stellar-sdk";
+import { deriveKeypair } from "./seamless-derive";
 
 // Fixed eval input — same salt every time so the derived Stellar key is deterministic per credential.
 const PRF_EVAL_SALT = new TextEncoder().encode("pinkraft-stellar-wallet-v1");
-// HKDF salt is separate so HKDF context is distinct from the PRF eval context.
-const HKDF_SALT = new TextEncoder().encode("pinkraft-stellar-keypair-v1");
 
 function base64urlToBytes(b64url: string): Uint8Array<ArrayBuffer> {
   const base64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
@@ -16,16 +15,19 @@ function base64urlToBytes(b64url: string): Uint8Array<ArrayBuffer> {
   return result;
 }
 
-async function deriveKeypair(prfOutput: ArrayBuffer): Promise<Keypair> {
-  const keyMaterial = await crypto.subtle.importKey("raw", prfOutput, "HKDF", false, [
-    "deriveBits",
-  ]);
-  const derived = await crypto.subtle.deriveBits(
-    { name: "HKDF", hash: "SHA-256", salt: HKDF_SALT, info: new Uint8Array() },
-    keyMaterial,
-    256,
-  );
-  return Keypair.fromRawEd25519Seed(Buffer.from(derived));
+async function verifyWalletAddress(credentialId: string, address: string): Promise<void> {
+  const res = await fetch("/api/wallet/seamless-address", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ credentialId, address }),
+  });
+  if (!res.ok) throw new Error("Failed to verify passkey wallet address");
+  const { data } = await res.json();
+  if (data.mismatch) {
+    throw new Error(
+      `This passkey previously signed as a different address (${data.expected.slice(0, 6)}…${data.expected.slice(-4)}). Use the same passkey you linked originally.`,
+    );
+  }
 }
 
 async function authenticateAndDeriveKeypair(): Promise<Keypair> {
@@ -45,7 +47,16 @@ async function authenticateAndDeriveKeypair(): Promise<Keypair> {
         }),
       ),
       userVerification: "preferred",
-      extensions: { prf: { eval: { first: PRF_EVAL_SALT.buffer as ArrayBuffer } } },
+      extensions: {
+        prf: {
+          eval: {
+            first: PRF_EVAL_SALT.buffer.slice(
+              PRF_EVAL_SALT.byteOffset,
+              PRF_EVAL_SALT.byteOffset + PRF_EVAL_SALT.byteLength,
+            ) as ArrayBuffer,
+          },
+        },
+      },
     },
   })) as PublicKeyCredential | null;
 
@@ -61,7 +72,9 @@ async function authenticateAndDeriveKeypair(): Promise<Keypair> {
     );
   }
 
-  return deriveKeypair(prfFirst);
+  const keypair = await deriveKeypair(prfFirst);
+  await verifyWalletAddress(credential.id, keypair.publicKey());
+  return keypair;
 }
 
 export type SeamlessWallet = {
