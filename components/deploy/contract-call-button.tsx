@@ -16,6 +16,7 @@ type ContractCallButtonProps = {
   variant?: "primary" | "secondary" | "danger";
   size?: "sm" | "md";
   disabled?: boolean;
+  className?: string;
   prepare: (address: string) => Promise<{ xdr: string; networkPassphrase: string }>;
   submit: (signedXdr: string) => Promise<{ txHash: string }>;
   onSuccess?: () => void;
@@ -30,6 +31,7 @@ export default function ContractCallButton({
   variant = "primary",
   size = "md",
   disabled = false,
+  className = "",
   prepare,
   submit,
   onSuccess,
@@ -65,7 +67,9 @@ export default function ContractCallButton({
         try {
           toast.info("Touch your passkey to connect wallet…");
           const wallet = await getSeamlessWallet();
-          toast.success(`Passkey wallet: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`);
+          toast.success(
+            `Passkey wallet: ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`,
+          );
 
           toast.info("Preparing transaction…");
           const { xdr, networkPassphrase } = await prepare(wallet.address);
@@ -151,7 +155,7 @@ export default function ContractCallButton({
       <button
         onClick={handleClick}
         disabled={busy || disabled}
-        className={`${variantClass} ${sizeClass} inline-flex items-center justify-center rounded-lg font-mono font-bold transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none`}
+        className={`${variantClass} ${sizeClass} ${className} inline-flex items-center justify-center rounded-lg font-mono font-bold transition-all duration-200 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none`}
       >
         {busy ? (
           <>
