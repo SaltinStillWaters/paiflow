@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { StrKey } from "@stellar/stellar-sdk";
+import { Prisma, ChargeRelayerMode, Role } from "@prisma/client";
 import { db } from "@/lib/db";
 import { requireDevAuth } from "@/lib/auth";
 import { AppError, withErrorHandler } from "@/lib/errors";
@@ -10,7 +11,8 @@ import { env, devDeployOwnerId, stellarRelayerAddress, stellarWasmHash } from "@
 import { validateFlow } from "@/lib/flows/validate";
 import { flowToPipeline } from "@/lib/flows/to-params";
 import { preparePipelineDeployTx, submitDeployTxByRelayer } from "@/lib/stellar/deploy";
-import { ChargeRelayerMode } from "@prisma/client";
+import { withRelayerLock } from "@/lib/stellar/client";
+import type { SubmitResult, PreparedPipelineDeploy } from "@/lib/stellar/deploy";
 import type { FlowGraph, Asset } from "@/lib/flows/schema";
 
 const AssetSchema = z.discriminatedUnion("kind", [
@@ -18,7 +20,7 @@ const AssetSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("known"), symbol: z.enum(["USDC"]) }),
   z.object({
     kind: z.literal("custom"),
-    code: z.string().min(1).max(12),
+    code: z.string().regex(/^[A-Za-z0-9]{1,12}$/, "Asset code must be 1-12 alphanumeric chars"),
     issuer: z.string().refine((s) => StrKey.isValidEd25519PublicKey(s), "Invalid issuer"),
   }),
 ]);
@@ -44,10 +46,23 @@ type PipelineSnapshotEntry = {
  */
 export async function POST(req: NextRequest) {
   return withErrorHandler(async () => {
-    const { user } = await requireDevAuth(req);
+    const { user } = await requireDevAuth(req, { role: Role.ADMIN });
     const rlKey = user ? `dev-deploy:${user.id}` : `dev-deploy:machine:${clientIp(req)}`;
     const rl = await rateLimit(rlKey, 10, 60);
     if (!rl.ok) throw new AppError("RATE_LIMITED", "Too many dev payroll deploys");
+
+    const network = env().STELLAR_NETWORK;
+    if (network === "mainnet") {
+      throw new AppError("FORBIDDEN", "dev-mode payroll deploy is not allowed on mainnet");
+    }
+
+    // Idempotency: a retry carrying the same key returns the original deployment
+    // instead of deploying a second set of contracts.
+    const idempotencyKey = req.headers.get("idempotency-key")?.trim() || null;
+    if (idempotencyKey) {
+      const existing = await db.deployment.findUnique({ where: { idempotencyKey } });
+      if (existing) return NextResponse.json({ data: serializeDeployment(existing) });
+    }
 
     const body = BodySchema.parse(await req.json());
     const ownerId = user?.id ?? devDeployOwnerId();
@@ -58,7 +73,6 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const network = env().STELLAR_NETWORK;
     const relayerAddress = stellarRelayerAddress();
     if (!relayerAddress) {
       throw new AppError("INTERNAL", "STELLAR_RELAYER_ADDRESS is not configured");
@@ -106,84 +120,105 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const deployment = await db.deployment.create({
-      data: {
-        flowId: flow.id,
-        ownerId,
-        network,
-        status: "BUILDING",
-        graphSnapshot: graph as object,
-        paramsSnapshot: pipeline as object,
-        sourceAccount,
-      },
-    });
-
+    let deployment;
     try {
-      const prepared = await preparePipelineDeployTx({
-        sourceAccount,
-        graph,
-        nodes: deployNodes,
-      });
-
-      const triggerNode = prepared.pipeline[0];
-      const subscriptionContractAddress = triggerNode?.contractAddress ?? null;
-      const splitterNode = prepared.pipeline.find((p) => p.templateKind === "SPLITTER_DEV");
-      const splitterContractAddress = splitterNode?.contractAddress ?? null;
-
-      await db.deployment.update({
-        where: { id: deployment.id },
+      deployment = await db.deployment.create({
         data: {
-          status: "PENDING_SIGNATURE",
-          unsignedXdr: prepared.xdr,
-          contractAddress: subscriptionContractAddress,
-          pipelineSnapshot: prepared.pipeline as object,
+          flowId: flow.id,
+          ownerId,
+          network,
+          status: "BUILDING",
+          graphSnapshot: graph as object,
+          paramsSnapshot: pipeline as object,
+          sourceAccount,
+          idempotencyKey,
         },
       });
+    } catch (e) {
+      // Concurrent request with the same key won the unique constraint — return
+      // the deployment it created rather than deploying a second time.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === "P2002" &&
+        idempotencyKey
+      ) {
+        const existing = await db.deployment.findUnique({ where: { idempotencyKey } });
+        if (existing) return NextResponse.json({ data: serializeDeployment(existing) });
+      }
+      throw e;
+    }
 
-      const result = await submitDeployTxByRelayer(prepared.xdr);
+    // startTs is derived from the pipeline params (not the on-chain result), so
+    // compute it up front — it is needed on both the success and recovery paths.
+    const scheduleNode = pipeline.find(
+      (n): n is typeof n & { params: { kind: "subscription_dev_trigger"; startTs: number } } =>
+        n.params.kind === "subscription_dev_trigger",
+    );
+    const startTs = scheduleNode?.params.startTs ?? Math.floor(Date.now() / 1000);
+    const nextChargeAt = new Date(Math.max(startTs, Math.floor(Date.now() / 1000)) * 1000);
 
-      if (result.status !== "SUCCESS") {
+    let prepared: PreparedPipelineDeploy | undefined;
+    let result: SubmitResult | undefined;
+    try {
+      // Serialize prepare + submit under the relayer lock: preparePipelineDeployTx
+      // fetches the relayer's sequence number and submitDeployTxByRelayer consumes
+      // it, so concurrent deploys (or a cron job) would otherwise race to txBadSeq.
+      await withRelayerLock(async () => {
+        prepared = await preparePipelineDeployTx({
+          sourceAccount,
+          graph,
+          nodes: deployNodes,
+        });
+        result = await submitDeployTxByRelayer(prepared.xdr);
+      });
+
+      const triggerNode = prepared!.pipeline[0];
+      const subscriptionContractAddress = triggerNode?.contractAddress ?? null;
+      const splitterNode = prepared!.pipeline.find((p) => p.templateKind === "SPLITTER_DEV");
+      const splitterContractAddress = splitterNode?.contractAddress ?? null;
+
+      if (result!.status !== "SUCCESS") {
         await db.deployment.update({
           where: { id: deployment.id },
           data: {
             status: "FAILED",
-            deployTxHash: result.txHash,
-            errorMessage: result.errorMessage,
+            deployTxHash: result!.txHash,
+            unsignedXdr: prepared!.xdr,
+            contractAddress: subscriptionContractAddress,
+            pipelineSnapshot: prepared!.pipeline as object,
+            errorMessage: result!.errorMessage,
           },
         });
         await audit({
           action: "DEPLOY_FAIL",
           userId: user?.id ?? null,
-          metadata: { deploymentId: deployment.id, error: result.errorMessage },
+          metadata: { deploymentId: deployment.id, error: result!.errorMessage },
         });
         return NextResponse.json(
           {
             error: {
               code: "UPSTREAM_RPC",
-              message: result.errorMessage ?? "Deployment failed",
+              message: result!.errorMessage ?? "Deployment failed",
             },
           },
           { status: 502 },
         );
       }
 
-      const pipelineSnapshot = prepared.pipeline as PipelineSnapshotEntry[];
-      const scheduleNode = pipeline.find(
-        (n): n is typeof n & { params: { kind: "subscription_dev_trigger"; startTs: number } } =>
-          n.params.kind === "subscription_dev_trigger",
-      );
-      const startTs = scheduleNode?.params.startTs ?? Math.floor(Date.now() / 1000);
+      const pipelineSnapshot = prepared!.pipeline as PipelineSnapshotEntry[];
 
       await db.deployment.update({
         where: { id: deployment.id },
         data: {
           status: "CONFIRMED",
-          deployTxHash: result.txHash,
+          deployTxHash: result!.txHash,
+          unsignedXdr: prepared!.xdr,
           contractAddress: subscriptionContractAddress,
+          pipelineSnapshot: prepared!.pipeline as object,
           confirmedAt: new Date(),
           chargeRelayerMode: ChargeRelayerMode.PLATFORM,
           chargeRelayerAddress: relayerAddress,
-          nextChargeAt: new Date(Math.max(startTs, Math.floor(Date.now() / 1000)) * 1000),
+          nextChargeAt,
         },
       });
 
@@ -192,7 +227,7 @@ export async function POST(req: NextRequest) {
         userId: user?.id ?? null,
         metadata: {
           deploymentId: deployment.id,
-          txHash: result.txHash,
+          txHash: result!.txHash,
           subscriptionContractAddress,
           splitterContractAddress,
         },
@@ -201,13 +236,44 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         data: {
           deploymentId: deployment.id,
-          txHash: result.txHash,
+          txHash: result!.txHash,
           subscriptionContractAddress,
           splitterContractAddress,
           pipeline: pipelineSnapshot,
         },
       });
     } catch (err) {
+      // If the on-chain tx already succeeded, the relayer has spent funds and the
+      // contracts are live — never record that as FAILED. Persist it as CONFIRMED
+      // with the real tx hash and flag the bookkeeping failure so it can be reconciled.
+      if (result?.status === "SUCCESS") {
+        const subscriptionContractAddress = prepared?.pipeline[0]?.contractAddress ?? null;
+        await db.deployment.update({
+          where: { id: deployment.id },
+          data: {
+            status: "CONFIRMED",
+            deployTxHash: result.txHash,
+            unsignedXdr: prepared?.xdr,
+            contractAddress: subscriptionContractAddress,
+            pipelineSnapshot: (prepared?.pipeline ?? []) as object,
+            confirmedAt: new Date(),
+            chargeRelayerMode: ChargeRelayerMode.PLATFORM,
+            chargeRelayerAddress: relayerAddress,
+            nextChargeAt,
+            errorMessage: `Deploy succeeded on-chain (tx ${result.txHash}) but post-deploy bookkeeping failed: ${(err as Error).message}`,
+          },
+        });
+        await audit({
+          action: "DEPLOY_CONFIRM",
+          userId: user?.id ?? null,
+          metadata: {
+            deploymentId: deployment.id,
+            txHash: result.txHash,
+            bookkeepingError: (err as Error).message,
+          },
+        });
+        throw err;
+      }
       await db.deployment.update({
         where: { id: deployment.id },
         data: { status: "FAILED", errorMessage: (err as Error).message },
@@ -220,6 +286,25 @@ export async function POST(req: NextRequest) {
       throw err;
     }
   });
+}
+
+function serializeDeployment(d: {
+  id: string;
+  deployTxHash: string | null;
+  contractAddress: string | null;
+  pipelineSnapshot: unknown;
+}) {
+  const pipeline = (
+    Array.isArray(d.pipelineSnapshot) ? d.pipelineSnapshot : []
+  ) as PipelineSnapshotEntry[];
+  const splitter = pipeline.find((p) => p.templateKind === "SPLITTER_DEV");
+  return {
+    deploymentId: d.id,
+    txHash: d.deployTxHash,
+    subscriptionContractAddress: d.contractAddress,
+    splitterContractAddress: splitter?.contractAddress ?? null,
+    pipeline,
+  };
 }
 
 function buildDevPayrollGraph(asset: Asset): FlowGraph {
