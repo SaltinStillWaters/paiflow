@@ -207,10 +207,11 @@ model Deployment {
   flowId          String           @db.Uuid
   ownerId         String           @db.Uuid
   network         String
-  contractAddress String?          @unique
-  deployTxHash    String?          @unique
-  idempotencyKey  String?          @unique
-  status          DeploymentStatus @default(DRAFT)
+  contractAddress    String?          @unique
+  deployTxHash       String?          @unique
+  idempotencyKey     String?          @unique
+  idempotencyPayload String?
+  status             DeploymentStatus @default(DRAFT)
   errorMessage    String?
   graphSnapshot   Json
   paramsSnapshot  Json

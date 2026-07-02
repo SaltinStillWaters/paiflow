@@ -3,6 +3,7 @@ import { ChargeRelayerMode } from "@prisma/client";
 
 const { mockDb, mockEnv, mockAuth, mockDeploy, mockRateLimit, mockClient } = vi.hoisted(() => {
   const mockDb = {
+    $transaction: vi.fn(async (fn: (tx: typeof mockDb) => Promise<unknown>) => fn(mockDb)),
     flow: {
       create: vi.fn(),
     },
@@ -56,6 +57,7 @@ vi.mock("@/lib/stellar/deploy", () => mockDeploy);
 vi.mock("@/lib/stellar/client", () => mockClient);
 
 import { POST } from "@/app/api/deployments/dev-payroll/route";
+import { hashIdempotencyPayload } from "@/app/api/deployments/dev-payroll/route";
 
 function makeRequest({
   asset = { kind: "known", symbol: "USDC" } as const,
@@ -142,6 +144,7 @@ describe("POST /api/deployments/dev-payroll", () => {
           network: "testnet",
           status: "BUILDING",
           sourceAccount: "GRELAYER",
+          idempotencyPayload: expect.any(String),
         }),
       }),
     );
@@ -255,6 +258,7 @@ describe("POST /api/deployments/dev-payroll", () => {
       id: "dep-existing",
       deployTxHash: "tx-existing",
       contractAddress: "CEXISTING",
+      idempotencyPayload: hashIdempotencyPayload({ kind: "known", symbol: "USDC" }),
       pipelineSnapshot: [
         {
           nodeId: "payroll-trigger",
@@ -273,6 +277,60 @@ describe("POST /api/deployments/dev-payroll", () => {
     expect(json.data.deploymentId).toBe("dep-existing");
     expect(json.data.txHash).toBe("tx-existing");
     expect(mockDb.deployment.create).not.toHaveBeenCalled();
+  });
+
+  it("returns 409 when an idempotency key is reused with a different asset", async () => {
+    const key = "idem-mismatch";
+    mockDb.deployment.findUnique.mockResolvedValue({
+      id: "dep-existing",
+      deployTxHash: "tx-existing",
+      contractAddress: "CEXISTING",
+      idempotencyPayload: hashIdempotencyPayload({ kind: "native" }),
+      pipelineSnapshot: [
+        {
+          nodeId: "payroll-trigger",
+          contractAddress: "CEXISTING",
+          templateKind: "SUBSCRIPTION_DEV",
+          salt: Buffer.alloc(32),
+        },
+      ],
+    });
+
+    const req = makeRequest({ idempotencyKey: key });
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json.error.code).toBe("CONFLICT");
+    expect(mockDb.deployment.create).not.toHaveBeenCalled();
+  });
+
+  it("returns the winner's deployment on a concurrent idempotency-key race", async () => {
+    const key = "idem-race";
+    mockDb.deployment.create.mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint failed on idempotencyKey"), { code: "P2002" }),
+    );
+    mockDb.deployment.findUnique.mockResolvedValue({
+      id: "dep-winner",
+      deployTxHash: "tx-winner",
+      contractAddress: "CWINNER",
+      idempotencyPayload: hashIdempotencyPayload({ kind: "known", symbol: "USDC" }),
+      pipelineSnapshot: [
+        {
+          nodeId: "payroll-trigger",
+          contractAddress: "CWINNER",
+          templateKind: "SUBSCRIPTION_DEV",
+          salt: Buffer.alloc(32),
+        },
+      ],
+    });
+
+    const req = makeRequest({ idempotencyKey: key });
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.deploymentId).toBe("dep-winner");
   });
 
   it("blocks deploy on mainnet", async () => {

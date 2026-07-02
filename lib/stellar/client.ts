@@ -1,5 +1,8 @@
 import "server-only";
+import { randomBytes } from "node:crypto";
 import { rpc, Horizon, StrKey } from "@stellar/stellar-sdk";
+import type { Redis } from "ioredis";
+import { redis } from "@/lib/redis";
 import { stellarHorizonUrl, stellarRpcUrl, stellarRelayerAddress } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 
@@ -65,11 +68,61 @@ export function decodeContractAddress(addr: string): Buffer {
 // This prevents txBadSeq races between concurrent requests and the auto-release cron.
 let relayerQueue = Promise.resolve<unknown>(undefined);
 
+const RELAYER_LOCK_TTL_MS = 90_000;
+const RELAYER_LOCK_POLL_MS = 100;
+const RELAYER_LOCK_MAX_WAIT_MS = 300_000;
+
 export async function withRelayerLock<T>(fn: () => Promise<T>): Promise<T> {
+  const client = redis();
+  if (client) {
+    return withRelayerDistributedLock(client, fn);
+  }
   const promise = relayerQueue.then(() => fn());
   relayerQueue = promise.then(
     () => {},
     () => {},
   );
   return promise;
+}
+
+async function withRelayerDistributedLock<T>(client: Redis, fn: () => Promise<T>): Promise<T> {
+  const relayerAddress = stellarRelayerAddress();
+  const key = relayerAddress ? `relayer-lock:${relayerAddress}` : "relayer-lock";
+  const token = randomBytes(16).toString("hex");
+
+  const acquired = await acquireRelayerLock(client, key, token);
+  if (!acquired) {
+    throw new AppError("INTERNAL", "Timed out waiting for relayer lock");
+  }
+
+  try {
+    return await fn();
+  } finally {
+    await releaseRelayerLock(client, key, token);
+  }
+}
+
+async function acquireRelayerLock(client: Redis, key: string, token: string): Promise<boolean> {
+  const deadline = Date.now() + RELAYER_LOCK_MAX_WAIT_MS;
+  while (Date.now() < deadline) {
+    const ok = await client.set(key, token, "PX", RELAYER_LOCK_TTL_MS, "NX");
+    if (ok === "OK") return true;
+    await new Promise((r) => setTimeout(r, RELAYER_LOCK_POLL_MS));
+  }
+  return false;
+}
+
+async function releaseRelayerLock(client: Redis, key: string, token: string): Promise<void> {
+  const script = `
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+      return redis.call("del", KEYS[1])
+    else
+      return 0
+    end
+  `;
+  try {
+    await client.eval(script, 1, key, token);
+  } catch {
+    // Best-effort release. The lock will expire via TTL if this fails.
+  }
 }

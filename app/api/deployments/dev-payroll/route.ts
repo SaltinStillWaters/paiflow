@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { StrKey } from "@stellar/stellar-sdk";
 import { Prisma, ChargeRelayerMode, Role } from "@prisma/client";
@@ -56,14 +57,6 @@ export async function POST(req: NextRequest) {
       throw new AppError("FORBIDDEN", "dev-mode payroll deploy is not allowed on mainnet");
     }
 
-    // Idempotency: a retry carrying the same key returns the original deployment
-    // instead of deploying a second set of contracts.
-    const idempotencyKey = req.headers.get("idempotency-key")?.trim() || null;
-    if (idempotencyKey) {
-      const existing = await db.deployment.findUnique({ where: { idempotencyKey } });
-      if (existing) return NextResponse.json({ data: serializeDeployment(existing) });
-    }
-
     const body = BodySchema.parse(await req.json());
     const ownerId = user?.id ?? devDeployOwnerId();
     if (!ownerId) {
@@ -76,6 +69,22 @@ export async function POST(req: NextRequest) {
     const relayerAddress = stellarRelayerAddress();
     if (!relayerAddress) {
       throw new AppError("INTERNAL", "STELLAR_RELAYER_ADDRESS is not configured");
+    }
+
+    // Idempotency: a retry carrying the same key returns the original deployment
+    // instead of deploying a second set of contracts. The payload hash ensures the
+    // same key cannot silently return a deployment denominated in a different asset.
+    const idempotencyKey = req.headers.get("idempotency-key")?.trim() || null;
+    const idempotencyPayload = hashIdempotencyPayload(body.asset);
+
+    if (idempotencyKey) {
+      const existing = await db.deployment.findUnique({ where: { idempotencyKey } });
+      if (existing) {
+        if (existing.idempotencyPayload && existing.idempotencyPayload !== idempotencyPayload) {
+          throw new AppError("CONFLICT", "Idempotency key reused with a different asset");
+        }
+        return NextResponse.json({ data: serializeDeployment(existing) });
+      }
     }
 
     const graph: FlowGraph = buildDevPayrollGraph(body.asset);
@@ -109,30 +118,37 @@ export async function POST(req: NextRequest) {
 
     const sourceAccount = relayerAddress;
 
-    const flow = await db.flow.create({
-      data: {
-        ownerId,
-        name: "Dev payroll (API)",
-        description: "Auto-created by POST /api/deployments/dev-payroll",
-        templateKind: "PAYROLL",
-        graph: graph as object,
-        parameters: pipeline as object,
-      },
-    });
-
-    let deployment;
+    // Create the Flow and its Deployment atomically so a Deployment.create failure
+    // (including the unique-constraint race on idempotencyKey) never leaves an
+    // orphaned Flow row.
+    let flow: Awaited<ReturnType<typeof db.flow.create>>;
+    let deployment: Awaited<ReturnType<typeof db.deployment.create>>;
     try {
-      deployment = await db.deployment.create({
-        data: {
-          flowId: flow.id,
-          ownerId,
-          network,
-          status: "BUILDING",
-          graphSnapshot: graph as object,
-          paramsSnapshot: pipeline as object,
-          sourceAccount,
-          idempotencyKey,
-        },
+      [flow, deployment] = await db.$transaction(async (tx) => {
+        const f = await tx.flow.create({
+          data: {
+            ownerId,
+            name: "Dev payroll (API)",
+            description: "Auto-created by POST /api/deployments/dev-payroll",
+            templateKind: "PAYROLL",
+            graph: graph as object,
+            parameters: pipeline as object,
+          },
+        });
+        const d = await tx.deployment.create({
+          data: {
+            flowId: f.id,
+            ownerId,
+            network,
+            status: "BUILDING",
+            graphSnapshot: graph as object,
+            paramsSnapshot: pipeline as object,
+            sourceAccount,
+            idempotencyKey,
+            idempotencyPayload,
+          },
+        });
+        return [f, d];
       });
     } catch (e) {
       // Concurrent request with the same key won the unique constraint — return
@@ -143,7 +159,12 @@ export async function POST(req: NextRequest) {
         idempotencyKey
       ) {
         const existing = await db.deployment.findUnique({ where: { idempotencyKey } });
-        if (existing) return NextResponse.json({ data: serializeDeployment(existing) });
+        if (existing) {
+          if (existing.idempotencyPayload && existing.idempotencyPayload !== idempotencyPayload) {
+            throw new AppError("CONFLICT", "Idempotency key reused with a different asset");
+          }
+          return NextResponse.json({ data: serializeDeployment(existing) });
+        }
       }
       throw e;
     }
@@ -341,4 +362,20 @@ function buildDevPayrollGraph(asset: Asset): FlowGraph {
       },
     ],
   };
+}
+
+export function hashIdempotencyPayload(asset: Asset): string {
+  return createHash("sha256").update(canonicalJson(asset)).digest("hex");
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(",")}]`;
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort();
+  const entries = keys.map(
+    (k) => `${JSON.stringify(k)}:${canonicalJson((value as Record<string, unknown>)[k])}`,
+  );
+  return `{${entries.join(",")}}`;
 }
