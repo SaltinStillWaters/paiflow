@@ -209,6 +209,7 @@ model Deployment {
   network         String
   contractAddress String?          @unique
   deployTxHash    String?          @unique
+  idempotencyKey  String?          @unique
   status          DeploymentStatus @default(DRAFT)
   errorMessage    String?
   graphSnapshot   Json

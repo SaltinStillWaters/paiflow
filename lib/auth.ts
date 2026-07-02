@@ -1,4 +1,5 @@
 import "server-only";
+import { timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
@@ -151,12 +152,24 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   };
 }
 
-export async function requireDevAuth(req: NextRequest): Promise<{ user: SessionUser | null }> {
+export async function requireDevAuth(
+  req: NextRequest,
+  opts?: { role?: Role },
+): Promise<{ user: SessionUser | null }> {
   const secret = env().DEV_API_SECRET;
-  if (secret && req.headers.get("x-dev-api-secret") === secret) {
+  const provided = req.headers.get("x-dev-api-secret");
+  if (secret && provided && timingSafeEqualStr(provided, secret)) {
     return { user: null };
   }
-  return { user: await requireSession() };
+  return { user: await requireSession(opts) };
+}
+
+/** Constant-time string comparison that never short-circuits on length. */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ab.length !== bb.length) return false;
+  return timingSafeEqual(ab, bb);
 }
 
 export async function requireSession(opts?: { role?: Role }): Promise<SessionUser> {
