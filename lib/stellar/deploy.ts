@@ -2,6 +2,7 @@ import "server-only";
 import {
   Address,
   BASE_FEE,
+  Keypair,
   Operation,
   TransactionBuilder,
   hash,
@@ -10,7 +11,12 @@ import {
 } from "@stellar/stellar-sdk";
 import { randomBytes } from "node:crypto";
 import { sorobanRpc, horizon } from "./client";
-import { stellarFactoryAddress, stellarPassphrase, stellarRelayerAddress } from "@/lib/env";
+import {
+  stellarFactoryAddress,
+  stellarPassphrase,
+  stellarRelayerAddress,
+  stellarRelayerSecretKey,
+} from "@/lib/env";
 import { AppError } from "@/lib/errors";
 import type { ContractParams, PipelineNode, PipelineNodeParams } from "@/lib/flows/to-params";
 import type { FlowGraph } from "@/lib/flows/schema";
@@ -242,6 +248,22 @@ export type SubmitResult = {
   contractAddress?: string;
   errorMessage?: string;
 };
+
+/**
+ * Sign a prepared (unsigned) deploy XDR with the platform relayer key and
+ * submit it. Used by machine-auth deploy endpoints where the backend both
+ * builds and pays for the deployment instead of a session user signing it.
+ */
+export async function submitDeployTxByRelayer(unsignedXdr: string): Promise<SubmitResult> {
+  const secret = stellarRelayerSecretKey();
+  if (!secret) {
+    throw new AppError("INTERNAL", "STELLAR_RELAYER_SECRET_KEY is not configured");
+  }
+  const kp = Keypair.fromSecret(secret);
+  const tx = TransactionBuilder.fromXDR(unsignedXdr, stellarPassphrase());
+  tx.sign(kp);
+  return submitDeployTx(tx.toXDR());
+}
 
 /** Submit a signed XDR, poll until finalized. */
 export async function submitDeployTx(signedXdr: string): Promise<SubmitResult> {

@@ -108,6 +108,11 @@ const EnvSchema = z.object({
   // endpoints. When present, callers can authenticate by sending the header
   // x-dev-api-secret: <token> instead of a user session.
   DEV_API_SECRET: optionalString,
+  // User id that owns Flow / Deployment rows created by machine-auth deploy
+  // endpoints (e.g. POST /api/deployments/dev-payroll). Machine callers have no
+  // session, so the created rows are attributed to this account. Required to use
+  // those endpoints via x-dev-api-secret; ignored for session-authenticated calls.
+  DEV_DEPLOY_OWNER_ID: optionalString,
   SENTRY_DSN: optionalString,
   HIBP_CHECK_ENABLED: boolish,
 
@@ -257,6 +262,15 @@ export function stellarRelayerSecretKey(): string | undefined {
 
 export function stellarRelayerAddress(): string | undefined {
   return env().STELLAR_RELAYER_ADDRESS;
+}
+
+/**
+ * User id that owns Flow / Deployment rows created by machine-auth deploy
+ * endpoints. Machine callers authenticate with x-dev-api-secret and have no
+ * session, so created rows are attributed to this designated account.
+ */
+export function devDeployOwnerId(): string | undefined {
+  return env().DEV_DEPLOY_OWNER_ID;
 }
 
 /**
