@@ -7,7 +7,7 @@
  * font requests at runtime. */
 
 /* ---------------------------------------------------------------------------
- * Pink Raft — BRAND.md token system (Tailwind v4 @theme)
+ * Paiflow — BRAND.md token system (Tailwind v4 @theme)
  * Source of truth: /BRAND.md. Do not introduce new colors / fonts / effects
  * without updating BRAND.md first.
  * ------------------------------------------------------------------------- */
@@ -238,6 +238,20 @@ h4 {
   border-radius: 3px;
 }
 .glass-panel-sidebar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(28, 27, 27, 0.5);
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.25);
 }
 

@@ -11,12 +11,14 @@ export default function AllowanceClient({
   flowName,
   network,
   assetLabel,
+  templateKind,
 }: {
   deploymentId: string;
   contractAddress: string;
   flowName: string;
   network: "testnet" | "mainnet";
   assetLabel: string;
+  templateKind: "SUBSCRIPTION" | "PAYROLL";
 }) {
   const [amount, setAmount] = useState("");
   const [amountSet, setAmountSet] = useState(false);
@@ -108,6 +110,7 @@ export default function AllowanceClient({
             network={network}
             amount={amountSet ? tokenAmountToStroops(amount) : ""}
             mode="allowance"
+            templateKind={templateKind}
           />
 
           <p className="text-label-sm text-on-surface-variant text-center font-mono">
@@ -116,8 +119,8 @@ export default function AllowanceClient({
         </div>
 
         <p className="text-label-sm text-on-surface-variant text-center font-mono">
-          <Link href="/" className="hover:text-primary transition-colors">
-            Back to Pink Raft
+          <Link href="/dashboard" className="hover:text-primary transition-colors">
+            Back to Paiflow
           </Link>
         </p>
       </div>

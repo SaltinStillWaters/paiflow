@@ -12,7 +12,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const requiredEnv = {
   AUTH_SECRET: "test_auth_secret_at_least_32_chars_long",
-  DATABASE_URL: "postgresql://localhost:5432/pinkraft",
+  DATABASE_URL: "postgresql://paiflow:paiflow@localhost:5432/paiflow",
   NEXT_PUBLIC_APP_URL: "http://localhost:3000",
 };
 
@@ -60,5 +60,27 @@ describe("env helpers — fail-fast on network mismatch", () => {
   it("friendbot throws on mainnet", async () => {
     const mod = await loadEnv("mainnet");
     expect(() => mod.stellarFriendbotUrl()).toThrow(/not available on mainnet/i);
+  });
+});
+
+describe("env — PDAX deposit address validation", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete process.env.OFFRAMP_PDAX_DEPOSIT_ADDRESS_TESTNET;
+  });
+
+  it("accepts a valid Stellar ed25519 address", async () => {
+    process.env.OFFRAMP_PDAX_DEPOSIT_ADDRESS_TESTNET =
+      "GCK2MUVH6TABTXT4247CIEC5EO24CQQ4MZNW7EGBTP3TPGALLQI7P34G";
+    const mod = await loadEnv("testnet");
+    expect(mod.offRampPdaxDepositConfig().address).toBe(
+      "GCK2MUVH6TABTXT4247CIEC5EO24CQQ4MZNW7EGBTP3TPGALLQI7P34G",
+    );
+  });
+
+  it("throws at load on a malformed deposit address", async () => {
+    process.env.OFFRAMP_PDAX_DEPOSIT_ADDRESS_TESTNET = "not-a-stellar-address";
+    const mod = await loadEnv("testnet");
+    expect(() => mod.env()).toThrow(/valid Stellar ed25519 public key/i);
   });
 });

@@ -9,7 +9,7 @@ export type PipelineNodeSnapshot = {
 };
 
 /**
- * Map a Pinkraft asset to the PDAX Institution API quote currency.
+ * Map a Paiflow asset to the PDAX Institution API quote currency.
  * Production PDAX wallets use USDC. The hackathon UAT environment also uses
  * USDC in the institutional wallet; Stellar USDC (USDCXLM) is disabled for UAT
  * deposits, so the PDAX balance must be pre-funded off-chain. Override per
@@ -83,14 +83,17 @@ export function resolveCashOutAsset(
 
 /**
  * Resolve the asset for a payroll off-ramp job from the payroll trigger node's
- * config. This works for both the monolithic PAYROLL contract and the
- * decomposed dev-mode pipeline (SUBSCRIPTION_DEV → SPLITTER_DEV), because the
- * saved graph still contains the original `payroll` trigger with its asset.
+ * config. This works for the monolithic PAYROLL contract, the immutable
+ * SUBSCRIPTION → SPLITTER decomposition, and the dev-mode
+ * SUBSCRIPTION_DEV → SPLITTER_DEV decomposition.
  */
 export function resolvePayrollAsset(graph: FlowGraph | null): Asset | null {
   if (!graph) return null;
+  // Non-dev payrolls store a `payroll` trigger; dev-mode payrolls store a
+  // `subscription` trigger. Both carry the payroll asset in their config.
   const trigger = graph.nodes.find(
-    (n): n is Extract<FlowNode, { type: "payroll" }> => n.type === "payroll",
+    (n): n is Extract<FlowNode, { type: "payroll" | "subscription" }> =>
+      n.type === "payroll" || n.type === "subscription",
   );
   return trigger?.config.asset ?? null;
 }

@@ -13,6 +13,9 @@ export function getPendingLabels(graph: FlowGraph): string[] {
   for (const n of graph.nodes) {
     if (n.type === "split") {
       for (const r of n.config.recipients) {
+        // Fiat split recipients get an auto-generated cash-out contract at
+        // deploy time, so they don't need a wallet address.
+        if (r.payoutMode === "fiat") continue;
         if (isPendingAddress(r.address)) {
           labels.add(r.label ?? "unnamed");
         }
@@ -60,7 +63,17 @@ export const AssetSchema = z.discriminatedUnion("kind", [
   }),
   z.object({
     kind: z.literal("custom"),
-    code: z.string().min(1).max(12),
+    // Stellar asset codes are 1-12 alphanumeric ASCII chars. Normalize on parse
+    // so older saved flows with non-alphanumeric codes load instead of crashing,
+    // while still rejecting codes that contain no usable characters.
+    code: z
+      .string()
+      .transform((code) => code.replace(/[^A-Za-z0-9]/g, "").slice(0, 12))
+      .refine(
+        (code) => code.length >= 1,
+        "Asset code must contain at least one alphanumeric character",
+      )
+      .refine((code) => code.length <= 12, "Asset code must be 12 characters or fewer"),
     issuer: z.string().refine((s) => validAddress(s), "Invalid issuer"),
   }),
 ]);

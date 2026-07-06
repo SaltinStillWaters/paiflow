@@ -12,7 +12,7 @@ import {
   readSplitterRecipients,
   readSubscriptionAmountPerPeriod,
 } from "@/lib/stellar/relayer";
-import { PayrollRunStatus } from "@prisma/client";
+import { EmployeePayoutMode, PayrollRunStatus } from "@prisma/client";
 
 const PostSchema = z.object({
   txHash: z.string().min(1, "txHash is required"),
@@ -82,12 +82,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       (n) => n.templateKind === "SUBSCRIPTION_DEV" || n.templateKind === "SUBSCRIPTION",
     );
 
+    const isDev = splitterNode?.templateKind === "SPLITTER_DEV";
+
+    const cashOutContractAddresses = new Set(
+      pipeline?.filter((n) => n.templateKind === "CASH_OUT").map((n) => n.contractAddress) ?? [],
+    );
+
     let recipientRows: Array<{ address: string; amount: string }> = [];
 
     if (payrollNode?.contractAddress) {
       recipientRows = await readPayrollRecipients(payrollNode.contractAddress);
     } else if (splitterNode?.contractAddress) {
-      const isDev = splitterNode.templateKind === "SPLITTER_DEV";
       const raw = isDev
         ? await readSplitterDevRecipients(splitterNode.contractAddress)
         : await readSplitterRecipients(splitterNode.contractAddress);
@@ -128,6 +133,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     const existingEmployees = await db.employee.findMany({
       where: { deploymentId: d.id },
+      include: { bankDetail: true },
     });
     const employeeByCashOut = new Map(
       existingEmployees
@@ -136,48 +142,56 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     );
     const employeeByWallet = new Map(existingEmployees.map((e) => [e.address, e]));
 
-    for (const r of recipientRows) {
-      const existing = employeeByCashOut.get(r.address) ?? employeeByWallet.get(r.address);
-      const walletAddress = existing?.address ?? r.address;
-
-      const employee = await db.employee.upsert({
-        where: { deploymentId_address: { deploymentId: d.id, address: walletAddress } },
-        create: {
-          deploymentId: d.id,
-          address: walletAddress,
-          amountStroops: r.amount,
-        },
-        update: {
-          amountStroops: r.amount,
-        },
-      });
-
-      await db.payrollPayout.create({
-        data: {
-          payrollRunId: run.id,
-          employeeId: employee.id,
-          amountStroops: r.amount,
-          txHash: body.txHash,
-        },
-      });
-    }
+    const hasFiatEmployeeWithBank = existingEmployees.some(
+      (e) => e.payoutMode === "FIAT" && e.bankDetail,
+    );
+    const shouldCreateOffRampJobs = isDev ? d.offRampEnabled : hasFiatEmployeeWithBank;
 
     let offRampJobIds: string[] = [];
-    if (d.offRampEnabled) {
-      try {
-        offRampJobIds = await createOffRampJobsForPayrollRun(db, run.id);
-      } catch (offRampErr) {
-        const message = offRampErr instanceof Error ? offRampErr.message : String(offRampErr);
-        return NextResponse.json({
-          data: {
-            payrollRunId: run.id,
-            payoutCount: recipientRows.length,
-            offRampJobIds: [],
-            offRampError: message,
-          },
-        });
-      }
-    }
+
+    // Create payouts and off-ramp jobs in one transaction so the event feed
+    // never observes a fiat payout with a txHash but no linked off-ramp job.
+    // If off-ramp job creation fails, the whole transaction rolls back rather
+    // than leaving a partial set of fiat payouts without jobs.
+    await db.$transaction(
+      async (tx) => {
+        for (const r of recipientRows) {
+          const existing = employeeByCashOut.get(r.address) ?? employeeByWallet.get(r.address);
+          const walletAddress = existing?.address ?? r.address;
+          const isFiatCashOut = cashOutContractAddresses.has(r.address);
+
+          const employee = await tx.employee.upsert({
+            where: { deploymentId_address: { deploymentId: d.id, address: walletAddress } },
+            create: {
+              deploymentId: d.id,
+              address: walletAddress,
+              amountStroops: r.amount,
+              payoutMode: isFiatCashOut ? EmployeePayoutMode.FIAT : EmployeePayoutMode.CRYPTO,
+            },
+            update: {
+              amountStroops: r.amount,
+              // If this recipient is a known cash-out contract, ensure the
+              // employee is marked fiat so off-ramp jobs are created.
+              ...(isFiatCashOut ? { payoutMode: EmployeePayoutMode.FIAT } : {}),
+            },
+          });
+
+          await tx.payrollPayout.create({
+            data: {
+              payrollRunId: run.id,
+              employeeId: employee.id,
+              amountStroops: r.amount,
+              txHash: body.txHash,
+            },
+          });
+        }
+
+        if (shouldCreateOffRampJobs) {
+          offRampJobIds = await createOffRampJobsForPayrollRun(tx, run.id);
+        }
+      },
+      { maxWait: 5000, timeout: 30000 },
+    );
 
     await audit({
       action: "DEPLOY_INVOKE",

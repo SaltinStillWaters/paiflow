@@ -28,7 +28,7 @@ import { validateFlow } from "@/lib/flows/validate";
 import type { AddressEntry } from "@/lib/address-book.types";
 import { TriggerNode, ActionNode, LogicNode } from "@/components/nodes";
 import AnimatedStraightEdge from "@/components/nodes/animated-edge";
-import ConfigPanel from "./config-panel";
+import CanvasConfigPanel from "./canvas-config-panel";
 import Palette from "./palette";
 import DeployButton from "./deploy-button";
 import RaftLog, { type ChatMessage } from "./raft-log";
@@ -657,17 +657,19 @@ function Builder({ flowId, initialName, initialGraph }: BuilderProps) {
                 {!isValid && errors.length > 0 && (
                   <button
                     type="button"
+                    role="alert"
                     onClick={() => setErrorsModalOpen(true)}
-                    aria-label={`${errors.length} validation ${
+                    aria-label={`View all ${errors.length} validation ${
                       errors.length === 1 ? "issue" : "issues"
-                    } — view details`}
-                    title="View validation issues"
-                    className="bg-error/10 border-error/30 text-error hover:bg-error/20 ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 transition-colors"
+                    }`}
+                    className="bg-error-container/25 border-error/40 text-on-error-container hover:bg-error/10 ml-auto inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 transition-colors"
                   >
-                    <span className="material-symbols-outlined text-[16px] leading-none">
+                    <span className="material-symbols-outlined text-error text-[16px] leading-none">
                       error
                     </span>
-                    <span className="text-label-sm font-semibold">{errors.length}</span>
+                    <span className="text-label-sm text-error font-semibold">
+                      {errors.length} {errors.length === 1 ? "Error" : "Errors"}
+                    </span>
                   </button>
                 )}
               </div>
@@ -677,26 +679,6 @@ function Builder({ flowId, initialName, initialGraph }: BuilderProps) {
 
           {/* Row 3: Canvas */}
           <div className="relative min-h-0">
-            {/* Floating ConfigPanel — shifts left when sidebar opens */}
-            {selectedNode && (
-              <div
-                className={cn(
-                  "absolute top-3 z-20 max-h-[calc(100vh-160px)] w-80 overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl transition-all duration-300 ease-in-out",
-                  !chatCollapsed ? "right-[376px]" : "right-[108px]",
-                )}
-              >
-                <ConfigPanel
-                  node={selectedNode}
-                  graph={graph}
-                  onChange={updateNode}
-                  onDelete={deleteNode}
-                  addressBook={addressBook}
-                  refreshAddressBook={refreshAddressBook}
-                  className="border-0"
-                />
-              </div>
-            )}
-
             <ReactFlow
               nodes={rfNodes.map((n) => {
                 const fn = flowNodes.find((f) => f.id === n.id);
@@ -736,6 +718,18 @@ function Builder({ flowId, initialName, initialGraph }: BuilderProps) {
                 nodeComponent={MinimapNode}
                 className="!border !border-zinc-800"
               />
+              {selectedId && selectedNode && (
+                <CanvasConfigPanel
+                  selectedId={selectedId}
+                  node={selectedNode}
+                  graph={graph}
+                  onChange={updateNode}
+                  onDelete={deleteNode}
+                  addressBook={addressBook}
+                  refreshAddressBook={refreshAddressBook}
+                  chatCollapsed={chatCollapsed}
+                />
+              )}
             </ReactFlow>
           </div>
         </div>

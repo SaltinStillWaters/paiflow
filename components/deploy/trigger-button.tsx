@@ -12,6 +12,7 @@ type TriggerButtonProps = {
   amount: string;
   isDeposit?: boolean;
   mode?: "trigger" | "allowance";
+  templateKind?: "SUBSCRIPTION" | "PAYROLL";
 };
 
 function isMobile() {
@@ -28,6 +29,7 @@ export function TriggerButton({
   amount,
   isDeposit,
   mode = "trigger",
+  templateKind,
 }: TriggerButtonProps) {
   const [busy, setBusy] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -86,10 +88,10 @@ export function TriggerButton({
           walletConnectClient = await SignClient.init({
             projectId,
             metadata: {
-              name: "Pinkraft",
+              name: "Paiflow",
               description: "Trigger contract deployments",
               url: typeof window !== "undefined" ? window.location.origin : "",
-              icons: ["https://pinkraft.xyz/logo.png"],
+              icons: ["/logo.png"],
             },
           });
         } finally {
@@ -138,10 +140,10 @@ export function TriggerButton({
 
         const walletConnectModule = new WalletConnectModule({
           projectId,
-          name: "Pinkraft",
+          name: "Paiflow",
           description: "Trigger contract deployments",
           url: typeof window !== "undefined" ? window.location.origin : "",
-          icons: ["https://pinkraft.xyz/logo.png"],
+          icons: ["/logo.png"],
           method: WalletConnectAllowedMethods.SIGN,
           network: network === "mainnet" ? WalletNetwork.PUBLIC : WalletNetwork.TESTNET,
           client:
@@ -238,7 +240,9 @@ export function TriggerButton({
     toast.info("Preparing transaction...");
     const preparePath =
       mode === "allowance"
-        ? `/api/deployments/${deploymentId}/subscription-allowance`
+        ? templateKind === "PAYROLL"
+          ? `/api/deployments/${deploymentId}/payroll-allowance`
+          : `/api/deployments/${deploymentId}/subscription-allowance`
         : `/api/deployments/${deploymentId}/trigger`;
     const submitPath =
       mode === "allowance"
@@ -252,6 +256,9 @@ export function TriggerButton({
     const data = await res.json();
     if (!res.ok) throw new Error(data?.error?.message ?? "Failed to prepare transaction");
 
+    const xdr = data.data.xdr ?? data.data.unsignedXdr;
+    if (!xdr) throw new Error("No transaction XDR returned");
+
     // Prevent WalletConnect from auto-redirecting to a stale wallet choice
     // (e.g. MetaMask) during signing, which causes an Android intent chooser.
     try {
@@ -262,7 +269,7 @@ export function TriggerButton({
 
     onAwaitingSignature?.();
     toast.info("Awaiting signature...");
-    const signed = await kit.signTransaction(data.data.xdr, {
+    const signed = await kit.signTransaction(xdr, {
       address,
       networkPassphrase: data.data.networkPassphrase,
     });
@@ -292,12 +299,12 @@ export function TriggerButton({
   }
 
   useEffect(() => {
-    const raw = sessionStorage.getItem("pinkraft_pending_wc");
+    const raw = sessionStorage.getItem("paiflow_pending_wc");
     if (!raw) return;
     try {
       const data = JSON.parse(raw) as { network: string; timestamp: number; walletId?: string };
       if (Date.now() - data.timestamp > 120_000) {
-        sessionStorage.removeItem("pinkraft_pending_wc");
+        sessionStorage.removeItem("paiflow_pending_wc");
         return;
       }
       if (data.network !== network) return;
@@ -312,13 +319,13 @@ export function TriggerButton({
             throw new Error("No session found after returning from wallet");
           }
           walletConnectModule.setSession(sessions[0].id);
-          sessionStorage.removeItem("pinkraft_pending_wc");
+          sessionStorage.removeItem("paiflow_pending_wc");
           const { address } = await kit.getAddress();
           toast.success(`Connected: ${address.slice(0, 6)}...${address.slice(-4)}`);
           await submitTrigger(address, kit, () => setShowOpenWallet(true));
         })
         .catch((err) => {
-          sessionStorage.removeItem("pinkraft_pending_wc");
+          sessionStorage.removeItem("paiflow_pending_wc");
           toast.error((err as Error).message ?? "Connection failed");
         })
         .finally(() => {
@@ -327,7 +334,7 @@ export function TriggerButton({
           setShowOpenWallet(false);
         });
     } catch {
-      sessionStorage.removeItem("pinkraft_pending_wc");
+      sessionStorage.removeItem("paiflow_pending_wc");
     }
   }, [network]);
 
@@ -361,7 +368,7 @@ export function TriggerButton({
         };
 
         sessionStorage.setItem(
-          "pinkraft_pending_wc",
+          "paiflow_pending_wc",
           JSON.stringify({ network, timestamp: Date.now(), walletId }),
         );
 
@@ -376,7 +383,7 @@ export function TriggerButton({
           ),
         ]);
         walletConnectModule.setSession(session.topic);
-        sessionStorage.removeItem("pinkraft_pending_wc");
+        sessionStorage.removeItem("paiflow_pending_wc");
       }
 
       setShowPicker(false);
@@ -385,7 +392,7 @@ export function TriggerButton({
       await submitTrigger(address, kit, () => setShowOpenWallet(true));
     } catch (err) {
       toast.error((err as Error).message ?? "Connection failed");
-      sessionStorage.removeItem("pinkraft_pending_wc");
+      sessionStorage.removeItem("paiflow_pending_wc");
     } finally {
       setBusy(false);
       setPendingWallet(null);
