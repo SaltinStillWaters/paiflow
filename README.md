@@ -107,17 +107,9 @@ Paiflow is **non-custodial** — the backend prepares XDR, but only the user's w
 
 Deployed via Railway from `staging` (auto-deploy on merge into `staging`).
 
-- **App URL**: https://paiflow.up.railway.app/
+- **App URL**: https://paiflow.xyz/
 - **📸 Stellar Expert (testnet)**:
   <img width="1251" height="891" alt="image" src="https://github.com/user-attachments/assets/e93400b1-82d5-45ec-b3ea-1af2bdb2b68e" />
-
-### Mainnet
-
-Cutover gated by `docs/mainnet-cutover.md`. WASM hashes uploaded via `pnpm contracts:upload --network=mainnet`.
-
-- **App URL**: https://paiflow.xyz/
-- **📸 Stellar Expert (mainnet)**:
-  <img width="1259" height="887" alt="image" src="https://github.com/user-attachments/assets/be166d1c-93eb-4cef-b6f7-a8d75e15241c" />
 
 ## 🎥 Demo
 
@@ -130,10 +122,10 @@ Cutover gated by `docs/mainnet-cutover.md`. WASM hashes uploaded via `pnpm contr
 ## 👨‍💻 Team
 
 | Name           | Role               | GitHub                                                     |
-| -------------- | ------------------ | ---------------------------------------------------------- | --- |
+| -------------- | ------------------ | ---------------------------------------------------------- |
 | Mark Hugh Neri | CTO                | [@kimerran](https://github.com/kimerran)                   |
 | Mychal Pejana  | Smart Contract Dev | [@SaltinStillWaters](https://github.com/SaltinStillWaters) |
-| Carl Macabales | AI Developer       | [@cemmacabales](https://github.com/cemmacabales)           |     |
+| Carl Macabales | AI Developer       | [@cemmacabales](https://github.com/cemmacabales)           |
 
 ## 📜 License
 
