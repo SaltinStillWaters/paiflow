@@ -8,30 +8,50 @@ import { preparePayrollUpdateRecipientsInvocation } from "@/lib/stellar/invoke";
 import {
   submitUpdateRecipientsByRelayer,
   submitSetSubscriptionAmountByRelayer,
+  updatePaymentByRelayer,
 } from "@/lib/stellar/dev-mutate";
 import { prepareDevCashOutRecipients } from "@/lib/stellar/cash-out";
-import { syncEmployees } from "@/lib/employees";
+import { syncEmployees, deriveFiatPlaceholderAddress } from "@/lib/employees";
 import { stellarPassphrase, offRampTreasuryAddress } from "@/lib/env";
 import { assetContractId } from "@/lib/stellar/assets";
 import type { FlowGraph } from "@/lib/flows/schema";
 
-const RecipientSchema = z.object({
-  address: z.string().refine((s) => StrKey.isValidEd25519PublicKey(s), "Invalid Stellar address"),
-  amount: z.string().regex(/^\d+$/, "Amount must be a positive integer string"),
-  label: z.string().optional(),
-  payoutMode: z.enum(["crypto", "fiat"]).default("crypto"),
-  bankDetail: z
-    .object({
-      accountName: z.string(),
-      accountNumber: z.string(),
-      bankCode: z.string(),
-    })
-    .optional(),
-});
+const RecipientSchema = z
+  .object({
+    address: z
+      .string()
+      .refine((s) => StrKey.isValidEd25519PublicKey(s), "Invalid Stellar address")
+      .optional(),
+    amount: z.string().regex(/^\d+$/, "Amount must be a positive integer string"),
+    label: z.string().optional(),
+    payoutMode: z.enum(["crypto", "fiat"]).default("crypto"),
+    bankDetail: z
+      .object({
+        accountName: z.string(),
+        accountNumber: z.string(),
+        bankCode: z.string(),
+      })
+      .optional(),
+  })
+  .refine((r) => !(r.payoutMode === "crypto" && !r.address), {
+    message: "crypto recipients require a valid Stellar address",
+  })
+  .refine(
+    (r) => {
+      if (r.payoutMode !== "fiat") return true;
+      return (
+        !!r.bankDetail?.accountName && !!r.bankDetail?.accountNumber && !!r.bankDetail?.bankCode
+      );
+    },
+    { message: "fiat recipients require bankDetail (accountName, accountNumber, bankCode)" },
+  );
 
 const PostSchema = z.object({
   recipients: z.array(RecipientSchema).min(1).max(20),
 });
+
+type Recipient = z.infer<typeof RecipientSchema>;
+type NormalizedRecipient = Omit<Recipient, "address"> & { address: string };
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   return withErrorHandler(async () => {
@@ -50,6 +70,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       throw new AppError("VALIDATION", "Deployment is not a payroll");
     }
 
+    const normalizedRecipients = body.recipients.map((r) => {
+      if (r.payoutMode === "fiat" && !r.address) {
+        return {
+          ...r,
+          address: deriveFiatPlaceholderAddress({
+            deploymentId: d.id,
+            accountNumber: r.bankDetail!.accountNumber,
+            bankCode: r.bankDetail!.bankCode,
+          }),
+        } as NormalizedRecipient;
+      }
+      return r as NormalizedRecipient;
+    });
+
     const pipeline = d.pipelineSnapshot as Array<{
       nodeId: string;
       contractAddress: string;
@@ -59,14 +93,104 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     const splitterDevNode = pipeline?.find((n) => n.templateKind === "SPLITTER_DEV");
     const subscriptionDevNode = pipeline?.find((n) => n.templateKind === "SUBSCRIPTION_DEV");
     const splitterNode = pipeline?.find((n) => n.templateKind === "SPLITTER");
+    const payerNode = pipeline?.find((n) => n.templateKind === "PAYER");
+    const payerDevNode = pipeline?.find((n) => n.templateKind === "PAYER_DEV");
 
-    // Immutable non-dev payrolls bake recipients into the on-chain SPLITTER at
-    // deploy time and cannot be changed afterwards.
-    if (splitterNode?.contractAddress && !payrollNode && !splitterDevNode) {
+    // Immutable non-dev payrolls bake recipients into the on-chain SPLITTER /
+    // PAYER at deploy time and cannot be changed afterwards.
+    if (
+      (splitterNode?.contractAddress || payerNode?.contractAddress) &&
+      !payrollNode &&
+      !splitterDevNode
+    ) {
       throw new AppError(
         "VALIDATION",
         "This payroll is immutable. Recipients cannot be updated after deploy.",
       );
+    }
+
+    // Dev-mode single-pay payroll: SUBSCRIPTION_DEV → PAYER_DEV. The first
+    // recipient is the single employee; a fiat employee gets a generated
+    // CASH_OUT_DEV contract just like fiat split recipients.
+    if (!splitterDevNode?.contractAddress && payerDevNode?.contractAddress) {
+      const r = normalizedRecipients[0]!;
+      const graph = (d.graphSnapshot ?? null) as FlowGraph | null;
+      const asset =
+        graph?.nodes.find((n) => n.type === "payroll")?.config.asset ??
+        graph?.nodes.find((n) => n.type === "subscription")?.config.asset;
+      if (!asset) {
+        throw new AppError("VALIDATION", "Payroll asset not found in graph snapshot");
+      }
+      const assetContract = assetContractId(asset);
+      const treasury = offRampTreasuryAddress() ?? payerDevNode.contractAddress;
+
+      const existingEmployees = await db.employee.findMany({
+        where: { deploymentId: d.id },
+        select: { address: true, cashOutContractAddress: true },
+      });
+
+      const { onChainRecipients, txHashes, cashOutByInputAddress } =
+        await prepareDevCashOutRecipients({
+          splitterContractAddress: payerDevNode.contractAddress,
+          adminAddress: d.sourceAccount ?? payerDevNode.contractAddress,
+          assetContractAddress: assetContract,
+          treasury,
+          existingEmployees,
+          inputRecipients: [
+            {
+              address: r.address,
+              amount: r.amount,
+              bps: 0,
+              payoutMode: r.payoutMode,
+              bankDetail: r.bankDetail,
+            },
+          ],
+        });
+
+      const onChain = onChainRecipients[0];
+      if (!onChain) {
+        throw new AppError("VALIDATION", "No recipient provided for the pay node");
+      }
+
+      const payResult = await updatePaymentByRelayer(payerDevNode.contractAddress, {
+        recipient: onChain.address,
+        amountStroops: r.amount,
+        percentageBps: 0,
+        isCashOut: onChain.isCashOut,
+      });
+      if (payResult.status !== "SUCCESS") {
+        throw new AppError("UPSTREAM_RPC", payResult.errorMessage ?? "update_payment failed");
+      }
+      txHashes.push(payResult.txHash);
+
+      if (subscriptionDevNode?.contractAddress) {
+        const amountResult = await submitSetSubscriptionAmountByRelayer(
+          subscriptionDevNode.contractAddress,
+          r.amount,
+        );
+        txHashes.push(amountResult.txHash);
+      }
+
+      await syncEmployees(
+        d.id,
+        [
+          {
+            address: r.address,
+            amountStroops: r.amount,
+            label: r.label,
+            payoutMode: r.payoutMode,
+            bankDetail: r.bankDetail,
+          },
+        ],
+        cashOutByInputAddress,
+      );
+
+      return NextResponse.json({
+        data: {
+          txHashes,
+          contractAddress: payerDevNode.contractAddress,
+        },
+      });
     }
 
     // Execute the on-chain mutation first. Only after it succeeds do we mirror
@@ -80,12 +204,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       const { xdr } = await preparePayrollUpdateRecipientsInvocation({
         contractAddress: payrollNode.contractAddress,
         adminAddress: d.sourceAccount,
-        recipients: body.recipients.map((r) => ({ address: r.address, amount: r.amount })),
+        recipients: normalizedRecipients.map((r) => ({ address: r.address, amount: r.amount })),
       });
 
       await syncEmployees(
         d.id,
-        body.recipients.map((r) => ({
+        normalizedRecipients.map((r) => ({
           address: r.address,
           amountStroops: r.amount,
           label: r.label,
@@ -133,7 +257,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
         assetContractAddress: assetContract,
         treasury,
         existingEmployees,
-        inputRecipients: body.recipients.map((r) => ({
+        inputRecipients: normalizedRecipients.map((r) => ({
           address: r.address,
           amount: r.amount,
           bps: 0,
@@ -149,7 +273,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
     txHashes.push(recipientsResult.txHash);
 
     if (subscriptionDevNode?.contractAddress) {
-      const totalStroops = body.recipients
+      const totalStroops = normalizedRecipients
         .reduce((sum, r) => sum + BigInt(r.amount), 0n)
         .toString();
       const amountResult = await submitSetSubscriptionAmountByRelayer(
@@ -161,7 +285,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 
     await syncEmployees(
       d.id,
-      body.recipients.map((r) => ({
+      normalizedRecipients.map((r) => ({
         address: r.address,
         amountStroops: r.amount,
         label: r.label,
