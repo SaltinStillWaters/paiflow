@@ -656,6 +656,8 @@ describe("flowToParams", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -706,6 +708,8 @@ describe("flowToParams", () => {
             id: "t",
             type: "payroll",
             config: {
+              startsAt: "2030-01-01T00:00:00.000Z",
+              timeZone: "UTC",
               asset: { kind: "known", symbol: "USDC" },
               employer: ADDR_A,
               intervalAmount: 1,
@@ -762,6 +766,8 @@ describe("flowToParams", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -797,6 +803,8 @@ describe("flowToParams", () => {
             id: "t",
             type: "payroll",
             config: {
+              startsAt: "2030-01-01T00:00:00.000Z",
+              timeZone: "UTC",
               asset: { kind: "known", symbol: "USDC" },
               employer: ADDR_A,
               intervalAmount: 1,
@@ -965,6 +973,8 @@ describe("flowToParams", () => {
             id: "t",
             type: "subscription",
             config: {
+              startsAt: "2030-01-01T00:00:00.000Z",
+              timeZone: "UTC",
               asset: { kind: "native" },
               subscriber: ADDR_A,
               amountPerPeriodStroops: "1000",
@@ -1180,6 +1190,8 @@ describe("flowToPipeline", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "1000000",
@@ -1229,6 +1241,8 @@ describe("flowToPipeline", () => {
             id: "t",
             type: "subscription",
             config: {
+              startsAt: "2030-01-01T00:00:00.000Z",
+              timeZone: "UTC",
               asset: { kind: "known", symbol: "USDC" },
               subscriber: ADDR_A,
               amountPerPeriodStroops: "1000000",
@@ -1270,6 +1284,8 @@ describe("flowToPipeline", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             // Stale/understated manual value — must not reach the contract.
@@ -1315,6 +1331,8 @@ describe("flowToPipeline", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "2000000000",
@@ -1350,6 +1368,8 @@ describe("flowToPipeline", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "2000000000",
@@ -1385,6 +1405,8 @@ describe("flowToPipeline", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "2000000000",
@@ -2042,6 +2064,164 @@ describe("flowToPipeline", () => {
     // Duration is still computed from occurrences * interval, not from the
     // original (now-past) startsAt.
     expect(streamer.endTs - streamer.startTs).toBe(5 * 60);
+
+    vi.useRealTimers();
+  });
+
+  it("honors a future startsAt for subscription and payroll triggers", () => {
+    const futureStart = "2030-01-15T00:00:00.000Z";
+    const subscriptionPipeline = flowToPipeline({
+      nodes: [
+        {
+          id: "t",
+          type: "subscription",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            subscriber: ADDR_A,
+            amountPerPeriodStroops: "1000000",
+            intervalAmount: 1,
+            intervalUnit: "day",
+            startsAt: futureStart,
+            timeZone: "UTC",
+            occurrences: 5,
+          },
+        },
+        {
+          id: "a",
+          type: "pay",
+          config: {
+            recipient: ADDR_B,
+            amountStroops: "1000000",
+            asset: { kind: "known", symbol: "USDC" },
+            mode: "fixed",
+            fullAmount: false,
+          },
+        },
+      ],
+      edges: [{ id: "e", source: "t", target: "a" }],
+    });
+    const subParams = subscriptionPipeline[0]!.params as {
+      kind: string;
+      startTs: number;
+      endTs: number;
+      intervalSeconds: number;
+    };
+    expect(subParams.kind).toBe("subscription_trigger");
+    expect(subParams.startTs).toBe(Math.floor(new Date(futureStart).getTime() / 1000));
+    expect(subParams.endTs - subParams.startTs).toBe(5 * 86400);
+
+    const payrollPipeline = flowToPipeline({
+      nodes: [
+        {
+          id: "t",
+          type: "payroll",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            employer: ADDR_A,
+            intervalAmount: 1,
+            intervalUnit: "week",
+            startsAt: futureStart,
+            timeZone: "UTC",
+            occurrences: 4,
+            fillScheduleViaApi: false,
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            recipients: [{ address: ADDR_A, mode: "fixed", amountStroops: "10000000", label: "A" }],
+          },
+        },
+      ],
+      edges: [{ id: "e", source: "t", target: "a" }],
+    });
+    const payrollParams = payrollPipeline[0]!.params as {
+      kind: string;
+      startTs: number;
+      endTs: number;
+      intervalSeconds: number;
+    };
+    expect(payrollParams.kind).toBe("subscription_trigger");
+    expect(payrollParams.startTs).toBe(Math.floor(new Date(futureStart).getTime() / 1000));
+    expect(payrollParams.endTs - payrollParams.startTs).toBe(4 * 7 * 86400);
+  });
+
+  it("clamps subscription and payroll startsAt to now when the configured start is in the past", () => {
+    const now = new Date("2030-01-01T12:00:00.000Z").getTime();
+    vi.setSystemTime(now);
+
+    const subscriptionPipeline = flowToPipeline({
+      nodes: [
+        {
+          id: "t",
+          type: "subscription",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            subscriber: ADDR_A,
+            amountPerPeriodStroops: "1000000",
+            intervalAmount: 1,
+            intervalUnit: "hour",
+            startsAt: "2030-01-01T11:50:00.000Z",
+            timeZone: "UTC",
+            occurrences: 5,
+          },
+        },
+        {
+          id: "a",
+          type: "pay",
+          config: {
+            recipient: ADDR_B,
+            amountStroops: "1000000",
+            asset: { kind: "known", symbol: "USDC" },
+            mode: "fixed",
+            fullAmount: false,
+          },
+        },
+      ],
+      edges: [{ id: "e", source: "t", target: "a" }],
+    });
+    const subParams = subscriptionPipeline[0]!.params as {
+      kind: string;
+      startTs: number;
+    };
+    expect(subParams.kind).toBe("subscription_trigger");
+    expect(subParams.startTs).toBe(Math.floor(now / 1000));
+
+    const payrollPipeline = flowToPipeline({
+      nodes: [
+        {
+          id: "t",
+          type: "payroll",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            employer: ADDR_A,
+            intervalAmount: 1,
+            intervalUnit: "day",
+            startsAt: "2030-01-01T11:50:00.000Z",
+            timeZone: "UTC",
+            occurrences: 5,
+            fillScheduleViaApi: false,
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            recipients: [{ address: ADDR_A, mode: "fixed", amountStroops: "10000000", label: "A" }],
+          },
+        },
+      ],
+      edges: [{ id: "e", source: "t", target: "a" }],
+    });
+    const payrollParams = payrollPipeline[0]!.params as {
+      kind: string;
+      startTs: number;
+    };
+    expect(payrollParams.kind).toBe("subscription_trigger");
+    expect(payrollParams.startTs).toBe(Math.floor(now / 1000));
 
     vi.useRealTimers();
   });

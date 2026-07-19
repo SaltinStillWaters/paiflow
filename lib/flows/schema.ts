@@ -141,8 +141,10 @@ export const SubscriptionTrigger = z.object({
     amountPerPeriodStroops: z.string().regex(/^\d+$/, "Amount must be a positive integer string"),
     intervalAmount: z.number().int().positive().default(1),
     intervalUnit: z.enum(["minute", "hour", "day", "week", "month"]).default("day"),
+    startsAt: z.string().datetime(),
     endsAt: z.string().datetime().optional(),
     occurrences: z.number().int().positive().optional(),
+    timeZone: z.string().optional(),
   }),
 });
 
@@ -154,9 +156,11 @@ export const PayrollTrigger = z.object({
     employer: stellarAccount,
     intervalAmount: z.number().int().positive().default(1),
     intervalUnit: z.enum(["minute", "hour", "day", "week", "month"]).default("week"),
+    startsAt: z.string().datetime(),
     endsAt: z.string().datetime().optional(),
     occurrences: z.number().int().positive().optional(),
     fillScheduleViaApi: z.boolean().default(false),
+    timeZone: z.string().optional(),
   }),
 });
 
@@ -271,26 +275,74 @@ export function migrateFlowGraph(raw: unknown): unknown {
         };
       }
       if (node.type === "subscription" && node.config && typeof node.config === "object") {
-        const cfg = node.config as { intervalAmount?: unknown; intervalUnit?: unknown };
+        const cfg = node.config as {
+          intervalAmount?: unknown;
+          intervalUnit?: unknown;
+          startsAt?: unknown;
+          timeZone?: unknown;
+        };
+        const updates: Record<string, unknown> = {};
         if (cfg.intervalAmount === undefined || cfg.intervalUnit === undefined) {
+          updates.intervalAmount = 1;
+          updates.intervalUnit = "day";
+        }
+        if (cfg.startsAt === undefined) {
+          updates.startsAt = new Date().toISOString();
+        }
+        if (cfg.timeZone === undefined) {
+          updates.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        }
+        if (Object.keys(updates).length > 0) {
           return {
             ...node,
             config: {
               ...node.config,
-              intervalAmount: 1,
-              intervalUnit: "day",
+              ...updates,
             },
           };
         }
       }
       if (node.type === "payroll" && node.config && typeof node.config === "object") {
-        const cfg = node.config as { fillScheduleViaApi?: unknown };
+        const cfg = node.config as {
+          fillScheduleViaApi?: unknown;
+          startsAt?: unknown;
+          timeZone?: unknown;
+        };
+        const updates: Record<string, unknown> = {};
         if (cfg.fillScheduleViaApi === undefined) {
+          updates.fillScheduleViaApi = false;
+        }
+        if (cfg.startsAt === undefined) {
+          updates.startsAt = new Date().toISOString();
+        }
+        if (cfg.timeZone === undefined) {
+          updates.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        }
+        if (Object.keys(updates).length > 0) {
           return {
             ...node,
             config: {
               ...node.config,
-              fillScheduleViaApi: false,
+              ...updates,
+            },
+          };
+        }
+      }
+      if (node.type === "on_schedule" && node.config && typeof node.config === "object") {
+        const cfg = node.config as { timeZone?: unknown; startsAt?: unknown };
+        const updates: Record<string, unknown> = {};
+        if (cfg.startsAt === undefined) {
+          updates.startsAt = new Date().toISOString();
+        }
+        if (cfg.timeZone === undefined) {
+          updates.timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        }
+        if (Object.keys(updates).length > 0) {
+          return {
+            ...node,
+            config: {
+              ...node.config,
+              ...updates,
             },
           };
         }

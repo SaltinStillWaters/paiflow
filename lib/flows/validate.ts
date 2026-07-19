@@ -844,8 +844,7 @@ export function validateFlow(rawGraph: unknown): ValidationResult {
   // is not after its start. The builder clamps a past start up to "now" at
   // deploy time (to-params.ts), so an endsAt that is in the past — or earlier
   // than a future startsAt — always deploys into a contract rejection. Catch
-  // it here instead. Payroll with fillScheduleViaApi deploys a far-future
-  // placeholder schedule, so its configured endsAt is irrelevant.
+  // it here instead.
   if (
     trigger &&
     (trigger.type === "on_schedule" ||
@@ -855,15 +854,12 @@ export function validateFlow(rawGraph: unknown): ValidationResult {
     const cfg = trigger.config as {
       startsAt?: string;
       endsAt?: string;
-      fillScheduleViaApi?: boolean;
     };
-    const scheduleFilledViaApi = trigger.type === "payroll" && cfg.fillScheduleViaApi === true;
-    if (cfg.endsAt && !scheduleFilledViaApi) {
+    if (cfg.endsAt) {
       const nowSeconds = Math.floor(Date.now() / 1000);
-      const startSeconds =
-        trigger.type === "on_schedule" && cfg.startsAt
-          ? Math.max(nowSeconds, Math.floor(new Date(cfg.startsAt).getTime() / 1000))
-          : nowSeconds;
+      const startSeconds = cfg.startsAt
+        ? Math.max(nowSeconds, Math.floor(new Date(cfg.startsAt).getTime() / 1000))
+        : nowSeconds;
       const endSeconds = Math.floor(new Date(cfg.endsAt).getTime() / 1000);
       if (endSeconds <= startSeconds) {
         errors.push({

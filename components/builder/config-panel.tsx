@@ -391,7 +391,7 @@ export default function ConfigPanel({
                   ))}
                 </select>
               </Field>
-              <Field label="Starts at" error={fieldError("startsAt")}>
+              <Field label="First charge date" error={fieldError("startsAt")}>
                 <input
                   className="input"
                   type="datetime-local"
@@ -1034,15 +1034,59 @@ export default function ConfigPanel({
           })()}
           {(() => {
             const cfg = node.config as {
+              startsAt: string;
               intervalAmount?: number;
               intervalUnit?: "minute" | "hour" | "day" | "week" | "month";
               endsAt?: string;
               occurrences?: number;
+              timeZone?: string;
             };
             const amount = cfg.intervalAmount ?? 1;
             const unit = cfg.intervalUnit ?? "day";
+            const tz = cfg.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
             return (
               <>
+                <Field label="Timezone">
+                  <select
+                    className="input"
+                    value={tz}
+                    onChange={(e) => {
+                      const newTz = e.target.value;
+                      const localStart = formatIsoForTimezone(cfg.startsAt, tz);
+                      const atStart = isoFromLocalAndTimezone(localStart, newTz);
+                      const next: typeof cfg = {
+                        ...cfg,
+                        startsAt: atStart,
+                        timeZone: newTz,
+                      };
+                      if (cfg.endsAt) {
+                        const localEnd = formatIsoForTimezone(cfg.endsAt, tz);
+                        next.endsAt = isoFromLocalAndTimezone(localEnd, newTz);
+                      }
+                      onChange({ ...node, config: next } as FlowNode);
+                    }}
+                  >
+                    {TIMEZONES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="First charge date" error={fieldError("startsAt")}>
+                  <input
+                    className="input"
+                    type="datetime-local"
+                    value={formatIsoForTimezone(cfg.startsAt, tz)}
+                    onChange={(e) => {
+                      const at = isoFromLocalAndTimezone(e.target.value, tz);
+                      onChange({
+                        ...node,
+                        config: { ...cfg, startsAt: at, timeZone: tz },
+                      } as FlowNode);
+                    }}
+                  />
+                </Field>
                 <Field label="Interval" error={fieldError("intervalAmount")}>
                   <div className="flex gap-2">
                     <input
@@ -1054,7 +1098,7 @@ export default function ConfigPanel({
                         const v = Math.max(1, Math.floor(Number(e.target.value) || 1));
                         onChange({
                           ...node,
-                          config: { ...cfg, intervalAmount: v, intervalUnit: unit },
+                          config: { ...cfg, intervalAmount: v, intervalUnit: unit, timeZone: tz },
                         } as FlowNode);
                       }}
                     />
@@ -1065,7 +1109,12 @@ export default function ConfigPanel({
                         const newUnit = e.target.value as typeof unit;
                         onChange({
                           ...node,
-                          config: { ...cfg, intervalAmount: amount, intervalUnit: newUnit },
+                          config: {
+                            ...cfg,
+                            intervalAmount: amount,
+                            intervalUnit: newUnit,
+                            timeZone: tz,
+                          },
                         } as FlowNode);
                       }}
                     >
@@ -1082,27 +1131,16 @@ export default function ConfigPanel({
                     <input
                       className="input"
                       type="datetime-local"
-                      value={
-                        cfg.endsAt
-                          ? formatIsoForTimezone(
-                              cfg.endsAt,
-                              Intl.DateTimeFormat().resolvedOptions().timeZone,
-                            )
-                          : ""
-                      }
+                      value={cfg.endsAt ? formatIsoForTimezone(cfg.endsAt, tz) : ""}
                       onChange={(e) => {
                         const local = e.target.value;
                         onChange({
                           ...node,
                           config: {
                             ...cfg,
-                            endsAt: local
-                              ? isoFromLocalAndTimezone(
-                                  local,
-                                  Intl.DateTimeFormat().resolvedOptions().timeZone,
-                                )
-                              : undefined,
+                            endsAt: local ? isoFromLocalAndTimezone(local, tz) : undefined,
                             occurrences: undefined,
+                            timeZone: tz,
                           },
                         } as FlowNode);
                       }}
@@ -1113,7 +1151,7 @@ export default function ConfigPanel({
                         onClick={() =>
                           onChange({
                             ...node,
-                            config: { ...cfg, endsAt: undefined },
+                            config: { ...cfg, endsAt: undefined, timeZone: tz },
                           } as FlowNode)
                         }
                         className="rounded border border-zinc-700 px-2 text-zinc-400 hover:text-red-300"
@@ -1137,6 +1175,7 @@ export default function ConfigPanel({
                           ...cfg,
                           endsAt: undefined,
                           occurrences: e.target.value ? Number(e.target.value) : undefined,
+                          timeZone: tz,
                         },
                       } as FlowNode)
                     }
@@ -1185,14 +1224,17 @@ export default function ConfigPanel({
           </ApiFillField>
           {(() => {
             const cfg = node.config as {
+              startsAt: string;
               intervalAmount?: number;
               intervalUnit?: "minute" | "hour" | "day" | "week" | "month";
               endsAt?: string;
               occurrences?: number;
               fillScheduleViaApi?: boolean;
+              timeZone?: string;
             };
             const amount = cfg.intervalAmount ?? 1;
             const unit = cfg.intervalUnit ?? "week";
+            const tz = cfg.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
             return (
               <>
                 {devMode && (
@@ -1213,6 +1255,48 @@ export default function ConfigPanel({
                   </label>
                 )}
 
+                <Field label="Timezone">
+                  <select
+                    className="input"
+                    value={tz}
+                    onChange={(e) => {
+                      const newTz = e.target.value;
+                      const localStart = formatIsoForTimezone(cfg.startsAt, tz);
+                      const atStart = isoFromLocalAndTimezone(localStart, newTz);
+                      const next: typeof cfg = {
+                        ...cfg,
+                        startsAt: atStart,
+                        timeZone: newTz,
+                      };
+                      if (cfg.endsAt) {
+                        const localEnd = formatIsoForTimezone(cfg.endsAt, tz);
+                        next.endsAt = isoFromLocalAndTimezone(localEnd, newTz);
+                      }
+                      onChange({ ...node, config: next } as FlowNode);
+                    }}
+                  >
+                    {TIMEZONES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="First charge date" error={fieldError("startsAt")}>
+                  <input
+                    className="input"
+                    type="datetime-local"
+                    value={formatIsoForTimezone(cfg.startsAt, tz)}
+                    onChange={(e) => {
+                      const at = isoFromLocalAndTimezone(e.target.value, tz);
+                      onChange({
+                        ...node,
+                        config: { ...cfg, startsAt: at, timeZone: tz },
+                      } as FlowNode);
+                    }}
+                  />
+                </Field>
+
                 {devMode && cfg.fillScheduleViaApi ? (
                   <div className="flex items-center gap-1.5 rounded border border-amber-800/40 bg-amber-950/20 px-3 py-2 font-mono text-[12px] text-amber-300">
                     <span className="material-symbols-outlined text-[14px]">tune</span>
@@ -1231,7 +1315,12 @@ export default function ConfigPanel({
                             const v = Math.max(1, Math.floor(Number(e.target.value) || 1));
                             onChange({
                               ...node,
-                              config: { ...cfg, intervalAmount: v, intervalUnit: unit },
+                              config: {
+                                ...cfg,
+                                intervalAmount: v,
+                                intervalUnit: unit,
+                                timeZone: tz,
+                              },
                             } as FlowNode);
                           }}
                         />
@@ -1242,7 +1331,12 @@ export default function ConfigPanel({
                             const newUnit = e.target.value as typeof unit;
                             onChange({
                               ...node,
-                              config: { ...cfg, intervalAmount: amount, intervalUnit: newUnit },
+                              config: {
+                                ...cfg,
+                                intervalAmount: amount,
+                                intervalUnit: newUnit,
+                                timeZone: tz,
+                              },
                             } as FlowNode);
                           }}
                         >
@@ -1259,27 +1353,16 @@ export default function ConfigPanel({
                         <input
                           className="input"
                           type="datetime-local"
-                          value={
-                            cfg.endsAt
-                              ? formatIsoForTimezone(
-                                  cfg.endsAt,
-                                  Intl.DateTimeFormat().resolvedOptions().timeZone,
-                                )
-                              : ""
-                          }
+                          value={cfg.endsAt ? formatIsoForTimezone(cfg.endsAt, tz) : ""}
                           onChange={(e) => {
                             const local = e.target.value;
                             onChange({
                               ...node,
                               config: {
                                 ...cfg,
-                                endsAt: local
-                                  ? isoFromLocalAndTimezone(
-                                      local,
-                                      Intl.DateTimeFormat().resolvedOptions().timeZone,
-                                    )
-                                  : undefined,
+                                endsAt: local ? isoFromLocalAndTimezone(local, tz) : undefined,
                                 occurrences: undefined,
+                                timeZone: tz,
                               },
                             } as FlowNode);
                           }}
@@ -1290,7 +1373,7 @@ export default function ConfigPanel({
                             onClick={() =>
                               onChange({
                                 ...node,
-                                config: { ...cfg, endsAt: undefined },
+                                config: { ...cfg, endsAt: undefined, timeZone: tz },
                               } as FlowNode)
                             }
                             className="rounded border border-zinc-700 px-2 text-zinc-400 hover:text-red-300"
@@ -1314,6 +1397,7 @@ export default function ConfigPanel({
                               ...cfg,
                               endsAt: undefined,
                               occurrences: e.target.value ? Number(e.target.value) : undefined,
+                              timeZone: tz,
                             },
                           } as FlowNode)
                         }

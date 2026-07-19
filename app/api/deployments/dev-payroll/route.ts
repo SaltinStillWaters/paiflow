@@ -189,6 +189,8 @@ export async function POST(req: NextRequest) {
             employer: body.sourceAccount,
             intervalAmount: body.intervalAmount,
             intervalUnit: body.intervalUnit,
+            startsAt: body.firstPaymentAt,
+            timeZone: "UTC",
             fillScheduleViaApi: false,
           },
         },

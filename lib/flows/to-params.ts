@@ -592,10 +592,8 @@ export function flowToPipeline(
     // If the configured start time is already in the past (common when a flow
     // was created minutes ago and is only being deployed now), start the stream
     // at the current time so short streams aren't already over on deploy.
-    let start =
-      trigger.type === "on_schedule"
-        ? Math.max(nowSeconds, Math.floor(new Date(trigger.config.startsAt).getTime() / 1000))
-        : nowSeconds;
+    const configuredStart = Math.floor(new Date(trigger.config.startsAt).getTime() / 1000);
+    let start = Math.max(nowSeconds, configuredStart);
 
     let end: number;
     let intervalSeconds: number;
@@ -608,23 +606,14 @@ export function flowToPipeline(
         occurrences?: number;
         fillScheduleViaApi?: boolean;
       };
-      const fillScheduleViaApi = trigger.type === "payroll" && cfg.fillScheduleViaApi;
 
-      if (fillScheduleViaApi) {
-        // Deploy with a far-future placeholder schedule; the real schedule is
-        // set via the API after deploy.
-        intervalSeconds = intervalToSeconds(1, "day");
-        start = nowSeconds + 60 * 60 * 24 * 365 * 10;
-        end = start + 60 * 60 * 24 * 365;
+      intervalSeconds = intervalToSeconds(cfg.intervalAmount, cfg.intervalUnit);
+      if (cfg.endsAt) {
+        end = Math.floor(new Date(cfg.endsAt).getTime() / 1000);
+      } else if (cfg.occurrences) {
+        end = start + cfg.occurrences * intervalSeconds;
       } else {
-        intervalSeconds = intervalToSeconds(cfg.intervalAmount, cfg.intervalUnit);
-        if (cfg.endsAt) {
-          end = Math.floor(new Date(cfg.endsAt).getTime() / 1000);
-        } else if (cfg.occurrences) {
-          end = start + cfg.occurrences * intervalSeconds;
-        } else {
-          end = start + 60 * 60 * 24 * 30;
-        }
+        end = start + 60 * 60 * 24 * 30;
       }
     } else {
       end = computeStreamerEndTs(trigger, start);

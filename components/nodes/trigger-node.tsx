@@ -5,6 +5,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { FlowNode } from "@/lib/flows/schema";
 import { assetLabel, isTrigger } from "@/lib/flows/schema";
 import { formatStroops } from "@/lib/utils";
+import { formatScheduleStart } from "@/lib/flows/english";
 
 type TriggerNodeData = {
   node: FlowNode;
@@ -38,13 +39,15 @@ function TriggerNodeComponent({ data, selected }: NodeProps) {
     title = "Subscription";
     const intervalAmount = n.config.intervalAmount ?? 1;
     const intervalUnit = n.config.intervalUnit ?? "day";
-    detail = `${formatStroops(n.config.amountPerPeriodStroops)} ${assetLabel(n.config.asset)} / ${intervalAmount} ${intervalUnit}`;
+    const startText = formatScheduleStart(n.config.startsAt, n.config.timeZone);
+    detail = `${formatStroops(n.config.amountPerPeriodStroops)} ${assetLabel(n.config.asset)} / ${intervalAmount} ${intervalUnit} · ${startText}`;
   } else if (n.type === "payroll") {
     icon = "group";
     title = "Payroll";
+    const startText = formatScheduleStart(n.config.startsAt, n.config.timeZone);
     detail = n.config.fillScheduleViaApi
-      ? `${assetLabel(n.config.asset)} · schedule via API`
-      : `${assetLabel(n.config.asset)} / ${n.config.intervalAmount ?? 1} ${n.config.intervalUnit ?? "week"}`;
+      ? `${assetLabel(n.config.asset)} · schedule via API · ${startText}`
+      : `${assetLabel(n.config.asset)} / ${n.config.intervalAmount ?? 1} ${n.config.intervalUnit ?? "week"} · ${startText}`;
   } else if (n.type === "oracle") {
     icon = "online_prediction";
     title = "Oracle";

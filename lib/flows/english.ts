@@ -28,7 +28,7 @@ function intervalLabel(amount: number, unit: string): string {
  * so the wording is deterministic across ICU versions. Falls back to the raw
  * string if the value isn't a parseable date.
  */
-function formatScheduleStart(iso: string, timeZone?: string): string {
+export function formatScheduleStart(iso: string, timeZone?: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const tz = timeZone || "UTC";
@@ -86,7 +86,8 @@ export function flowToEnglish(graph: FlowGraph): string {
   } else if (trigger.type === "subscription") {
     const amount =
       subscriptionAmountPerPeriodStroops(graph) ?? trigger.config.amountPerPeriodStroops;
-    triggerText = `When subscription pulls ${formatStroops(amount)} ${assetLabel(trigger.config.asset)} ${intervalLabel(trigger.config.intervalAmount ?? 1, trigger.config.intervalUnit ?? "day")}`;
+    const startText = formatScheduleStart(trigger.config.startsAt, trigger.config.timeZone);
+    triggerText = `When subscription pulls ${formatStroops(amount)} ${assetLabel(trigger.config.asset)} ${intervalLabel(trigger.config.intervalAmount ?? 1, trigger.config.intervalUnit ?? "day")} starting ${startText}`;
   } else if (trigger.type === "payroll") {
     const employer = isApiFillAddress(trigger.config.employer)
       ? "(employer set via API)"
@@ -108,7 +109,9 @@ export function flowToEnglish(graph: FlowGraph): string {
           : "0";
     const pullText =
       pullAmountStroops === "0" ? "" : `${formatStroops(pullAmountStroops)} ${assetStr} `;
-    triggerText = `When payroll pulls ${pullText}from ${employer} ${schedule}`;
+    const startText = formatScheduleStart(trigger.config.startsAt, trigger.config.timeZone);
+    const apiNote = trigger.config.fillScheduleViaApi ? " (may be overridden via API)" : "";
+    triggerText = `When payroll pulls ${pullText}from ${employer} ${schedule} starting ${startText}${apiNote}`;
   } else if (trigger.type === "oracle") {
     triggerText = `When oracle price meets threshold (${trigger.config.threshold}) for ${assetLabel(trigger.config.asset)}`;
   } else {

@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import Topbar from "@/components/app/topbar";
 import { FlowGraphSchema, type Asset, assetLabel } from "@/lib/flows/schema";
 import { validateFlow } from "@/lib/flows/validate";
-import { flowToEnglish } from "@/lib/flows/english";
+import { flowToEnglish, formatScheduleStart } from "@/lib/flows/english";
 import {
   flowToPipeline,
   getStreamerPreviewFromPipeline,
@@ -60,6 +60,8 @@ export default async function DeployReviewPage({
         | {
             type: "on_schedule" | "subscription" | "payroll";
             config: {
+              startsAt?: string;
+              timeZone?: string;
               intervalAmount?: number;
               intervalUnit?: string;
               interval?: string;
@@ -78,6 +80,10 @@ export default async function DeployReviewPage({
         : intervalAmount === 1
           ? `every ${intervalUnit}`
           : `every ${intervalAmount} ${intervalUnit}s`;
+
+      const configuredStartDate = triggerNode?.config.startsAt
+        ? formatScheduleStart(triggerNode.config.startsAt, triggerNode.config.timeZone)
+        : null;
 
       const action = graph.data!.nodes.find(
         (n) => n.type === "pay" || n.type === "split" || n.type === "swap" || n.type === "yield",
@@ -115,7 +121,7 @@ export default async function DeployReviewPage({
         perPeriodStroops: fillAmountViaApi ? "(set via API)" : perPeriodStroops,
         durationSecs: sp.durationSecs,
         intervalLabel,
-        startDate: fillScheduleViaApi ? "(set via API)" : new Date(sp.startTs * 1000).toISOString(),
+        startDate: configuredStartDate ?? new Date(sp.startTs * 1000).toISOString(),
         endDate: fillScheduleViaApi ? "(set via API)" : new Date(sp.endTs * 1000).toISOString(),
         asset,
         apiFilled: {

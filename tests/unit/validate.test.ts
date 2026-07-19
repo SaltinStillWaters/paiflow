@@ -67,6 +67,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -103,6 +105,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -240,6 +244,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -346,6 +352,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "10000000",
@@ -502,6 +510,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -547,6 +557,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -581,6 +593,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -625,6 +639,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -666,6 +682,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -700,6 +718,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -849,6 +869,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
@@ -1666,6 +1688,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "10000000",
@@ -1701,6 +1725,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "0",
@@ -1735,6 +1761,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             // Hidden in the UI for fixed splits; the pull is derived from the
@@ -1769,6 +1797,8 @@ describe("validateFlow", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "0",
@@ -2827,6 +2857,8 @@ describe("validateFlow — schedule window (endsAt vs start)", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: PAST,
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR_A,
             amountPerPeriodStroops: "10000000",
@@ -2898,6 +2930,60 @@ describe("validateFlow — schedule window (endsAt vs start)", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("rejects a subscription whose endsAt is before its future startsAt", () => {
+    const r = validateFlow(
+      subscriptionFlow({
+        startsAt: FUTURE_LATER,
+        endsAt: FUTURE,
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.find((e) => e.path.endsWith("config.endsAt"))?.friendlyMessage).toMatch(
+        /before its start time/i,
+      );
+    }
+  });
+
+  it("rejects a payroll whose endsAt is before its future startsAt", () => {
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "payroll",
+          config: {
+            startsAt: FUTURE_LATER,
+            timeZone: "UTC",
+            asset: { kind: "known", symbol: "USDC" },
+            employer: ADDR_A,
+            intervalAmount: 1,
+            intervalUnit: "week",
+            endsAt: FUTURE,
+            fillScheduleViaApi: false,
+          },
+        },
+        {
+          id: "a",
+          type: "pay",
+          config: {
+            recipient: ADDR_B,
+            amountStroops: "10000000",
+            asset: { kind: "known", symbol: "USDC" },
+            mode: "fixed",
+            fullAmount: false,
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.find((e) => e.path.endsWith("config.endsAt"))?.friendlyMessage).toMatch(
+        /before its start time/i,
+      );
+    }
+  });
+
   it("accepts an on_schedule with a valid future window", () => {
     const r = validateFlow(
       scheduleFlow({
@@ -2935,18 +3021,20 @@ describe("validateFlow — schedule window (endsAt vs start)", () => {
     expect(r.ok).toBe(true);
   });
 
-  it("accepts a payroll with fillScheduleViaApi even with a past endsAt (placeholder schedule)", () => {
+  it("accepts a payroll with fillScheduleViaApi and a future endsAt", () => {
     const r = validateFlow({
       nodes: [
         {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_A,
             intervalAmount: 1,
             intervalUnit: "week",
-            endsAt: PAST,
+            endsAt: FUTURE_LATER,
             fillScheduleViaApi: true,
           },
         },

@@ -203,7 +203,13 @@ function makeGraph(kind: TemplateKind): Prisma.InputJsonValue {
           {
             id: triggerId,
             type: "subscription",
-            config: { asset, subscriber: addr(), amountPerPeriodStroops: (1n * STROOP).toString() },
+            config: {
+              asset,
+              subscriber: addr(),
+              amountPerPeriodStroops: (1n * STROOP).toString(),
+              startsAt: new Date().toISOString(),
+              timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            },
           },
           {
             id: actionId,

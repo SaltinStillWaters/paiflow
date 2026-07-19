@@ -317,6 +317,8 @@ describe("flowToEnglish", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR,
             amountPerPeriodStroops: "10000000",
@@ -349,6 +351,8 @@ describe("flowToEnglish", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             subscriber: ADDR,
             amountPerPeriodStroops: "10000000",
@@ -381,6 +385,8 @@ describe("flowToEnglish", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: "PENDING:__api__",
             intervalAmount: 5,
@@ -410,6 +416,8 @@ describe("flowToEnglish", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR,
             intervalAmount: 1,
@@ -458,6 +466,8 @@ describe("flowToEnglish", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR,
             intervalAmount: 1,

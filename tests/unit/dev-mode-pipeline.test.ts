@@ -109,6 +109,8 @@ describe("dev-mode pipeline resolver", () => {
           id: "t",
           type: "subscription",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "native" },
             subscriber: ADDR_B,
             amountPerPeriodStroops: "1000",
@@ -275,6 +277,8 @@ describe("dev-mode pipeline resolver", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_B,
             intervalAmount: 1,
@@ -335,6 +339,8 @@ describe("dev-mode pipeline resolver", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_B,
             intervalAmount: 1,
@@ -382,6 +388,8 @@ describe("dev-mode pipeline resolver", () => {
           id: "t",
           type: "payroll",
           config: {
+            startsAt: "2030-01-01T00:00:00.000Z",
+            timeZone: "UTC",
             asset: { kind: "known", symbol: "USDC" },
             employer: ADDR_B,
             intervalAmount: 1,

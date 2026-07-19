@@ -53,7 +53,11 @@ describe("resolveCashOutAsset", () => {
     // Synthesized terminals exist only in the pipeline snapshot — the saved
     // graph has no cash_out node and no edge from the split node.
     const g = graph([
-      { id: "sub-1", type: "subscription", config: { asset: USDC } },
+      {
+        id: "sub-1",
+        type: "subscription",
+        config: { asset: USDC, startsAt: "2030-01-01T00:00:00.000Z", timeZone: "UTC" },
+      },
       { id: "split-1", type: "split", config: { asset: USDC, recipients: [] } },
     ]);
     const pipeline = [
