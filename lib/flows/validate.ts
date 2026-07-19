@@ -13,6 +13,7 @@ import {
   isPendingAddress,
   migrateFlowGraph,
   splitTotalFixedStroops,
+  subscriptionAmountPerPeriodStroops,
   assetLabel,
 } from "./schema";
 import { checkHardLimits } from "./limits";
@@ -55,6 +56,8 @@ const FRIENDLY = {
     "All recipients in a split must be either percentages or fixed amounts, not a mix.",
   FIXED_AMOUNT_REQUIRED: "Each fixed-amount recipient needs a positive amount.",
   TOTAL_FIXED_AMOUNT_REQUIRED: "Add at least one positive fixed amount to the split.",
+  AMOUNT_PER_INTERVAL_REQUIRED:
+    "A scheduled split needs an amount per interval — the total released each interval, divided among the recipients by their shares. Set it on the split step, or switch the recipients to fixed amounts (each then receives their amount every interval).",
   ASSET_CONFLICT:
     "This step can receive different assets depending on which path funds arrive through. Make sure every path leading into it carries the same asset, or add a swap so they match before merging.",
 } as const;
@@ -366,6 +369,28 @@ export function validateFlow(rawGraph: unknown): ValidationResult {
 
   for (const a of actions) {
     if (a.type === "split") {
+      // A scheduled split compiles to a streamer whose per-interval base is
+      // amountPerIntervalStroops — percentage recipients only define
+      // distribution (bps), so without it the pipeline silently falls back to
+      // 1 stroop per interval (streamerAmountPerInterval in to-params.ts),
+      // deploying a dust stream. Fixed-mode recipients are exempt: their base
+      // is derived as the sum of their per-interval amounts. The amount is
+      // baked into the contract constructor, so this is required even in dev
+      // mode (API-filled recipients can't supply it).
+      const allFixed =
+        a.config.recipients.length > 0 && a.config.recipients.every((r) => r.mode === "fixed");
+      if (
+        triggers[0]?.type === "on_schedule" &&
+        !allFixed &&
+        (!a.config.amountPerIntervalStroops || a.config.amountPerIntervalStroops === "0")
+      ) {
+        errors.push({
+          path: `nodes.${a.id}.config.amountPerIntervalStroops`,
+          message: "Scheduled split requires a positive amount per interval",
+          friendlyMessage: FRIENDLY.AMOUNT_PER_INTERVAL_REQUIRED,
+        });
+      }
+
       // Dev mode allows leaving recipients empty to fill via API after deploy.
       if (graph.devMode === true && a.config.recipients.length === 0) {
         continue;
@@ -791,11 +816,13 @@ export function validateFlow(rawGraph: unknown): ValidationResult {
     }
   }
 
-  // A subscription that pulls 0 is meaningless. In dev mode the amount may be
-  // left blank to be filled via the API after deploy, so only enforce this
-  // for real deployments.
+  // A subscription that pulls 0 is meaningless. When it feeds an all-fixed
+  // split the pull is derived from the fixed recipient sum (the UI hides the
+  // manual field then); otherwise the configured amount must be positive. In
+  // dev mode the amount may be left blank to be filled via the API after
+  // deploy, so only enforce this for real deployments.
   if (trigger?.type === "subscription" && graph.devMode !== true) {
-    const amount = trigger.config.amountPerPeriodStroops;
+    const amount = subscriptionAmountPerPeriodStroops(graph);
     if (!amount || BigInt(amount) <= 0n) {
       errors.push({
         path: `nodes.${trigger.id}.config.amountPerPeriodStroops`,
@@ -803,6 +830,44 @@ export function validateFlow(rawGraph: unknown): ValidationResult {
         friendlyMessage:
           "Set an amount per period greater than 0 — a subscription that pulls nothing will never charge.",
       });
+    }
+  }
+
+  // The streamer/subscription/payroll constructors reject a window whose end
+  // is not after its start. The builder clamps a past start up to "now" at
+  // deploy time (to-params.ts), so an endsAt that is in the past — or earlier
+  // than a future startsAt — always deploys into a contract rejection. Catch
+  // it here instead. Payroll with fillScheduleViaApi deploys a far-future
+  // placeholder schedule, so its configured endsAt is irrelevant.
+  if (
+    trigger &&
+    (trigger.type === "on_schedule" ||
+      trigger.type === "subscription" ||
+      trigger.type === "payroll")
+  ) {
+    const cfg = trigger.config as {
+      startsAt?: string;
+      endsAt?: string;
+      fillScheduleViaApi?: boolean;
+    };
+    const scheduleFilledViaApi = trigger.type === "payroll" && cfg.fillScheduleViaApi === true;
+    if (cfg.endsAt && !scheduleFilledViaApi) {
+      const nowSeconds = Math.floor(Date.now() / 1000);
+      const startSeconds =
+        trigger.type === "on_schedule" && cfg.startsAt
+          ? Math.max(nowSeconds, Math.floor(new Date(cfg.startsAt).getTime() / 1000))
+          : nowSeconds;
+      const endSeconds = Math.floor(new Date(cfg.endsAt).getTime() / 1000);
+      if (endSeconds <= startSeconds) {
+        errors.push({
+          path: `nodes.${trigger.id}.config.endsAt`,
+          message: "Schedule end time must be after its start time",
+          friendlyMessage:
+            endSeconds <= nowSeconds
+              ? "This schedule's end time has already passed. Pick an end date in the future."
+              : "This schedule's end time is before its start time. Move the end date later.",
+        });
+      }
     }
   }
 

@@ -1023,6 +1023,7 @@ describe("validateFlow", () => {
           type: "split",
           config: {
             asset: { kind: "native" },
+            amountPerIntervalStroops: "1000",
             recipients: [
               { address: ADDR_A, bps: 6000 },
               { address: ADDR_B, bps: 4000 },
@@ -1036,6 +1037,192 @@ describe("validateFlow", () => {
     if (r.ok) {
       expect(r.templateKind).toBe(TemplateKind.STREAMER);
       expect(r.pipeline).toEqual([TemplateKind.STREAMER]);
+    }
+  });
+
+  it("rejects on_schedule → split without an amount per interval", () => {
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "on_schedule",
+          config: {
+            intervalAmount: 1,
+            intervalUnit: "day",
+            startsAt: "2030-01-01T00:00:00.000Z",
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "native" },
+            recipients: [
+              { address: ADDR_A, bps: 6000 },
+              { address: ADDR_B, bps: 4000 },
+            ],
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.path === "nodes.a.config.amountPerIntervalStroops")).toBe(true);
+    }
+  });
+
+  it("rejects on_schedule → split with a zero amount per interval", () => {
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "on_schedule",
+          config: {
+            intervalAmount: 1,
+            intervalUnit: "day",
+            startsAt: "2030-01-01T00:00:00.000Z",
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "native" },
+            amountPerIntervalStroops: "0",
+            recipients: [
+              { address: ADDR_A, bps: 6000 },
+              { address: ADDR_B, bps: 4000 },
+            ],
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.path === "nodes.a.config.amountPerIntervalStroops")).toBe(true);
+    }
+  });
+
+  it("allows on_receive → split without an amount per interval", () => {
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "on_receive",
+          config: { asset: { kind: "native" } },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "native" },
+            recipients: [
+              { address: ADDR_A, bps: 6000 },
+              { address: ADDR_B, bps: 4000 },
+            ],
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(true);
+  });
+
+  it("allows on_schedule → fixed-amount split without an amount per interval", () => {
+    // The per-interval base is derived as the sum of the fixed amounts.
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "on_schedule",
+          config: {
+            intervalAmount: 1,
+            intervalUnit: "day",
+            startsAt: "2030-01-01T00:00:00.000Z",
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "native" },
+            recipients: [
+              { address: ADDR_A, mode: "fixed", amountStroops: "60000000" },
+              { address: ADDR_B, mode: "fixed", amountStroops: "40000000" },
+            ],
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.templateKind).toBe(TemplateKind.STREAMER);
+    }
+  });
+
+  it("rejects on_schedule → fixed-amount split with a zero total", () => {
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "on_schedule",
+          config: {
+            intervalAmount: 1,
+            intervalUnit: "day",
+            startsAt: "2030-01-01T00:00:00.000Z",
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "native" },
+            recipients: [{ address: ADDR_A, mode: "fixed", amountStroops: "0" }],
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.path === "nodes.a.config.recipients.0.amountStroops")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("requires an amount per interval for dev-mode scheduled splits with empty recipients", () => {
+    // API-filled recipients can't supply the constructor-baked base, so the
+    // field stays required even though empty recipients are allowed in dev mode.
+    const r = validateFlow({
+      devMode: true,
+      nodes: [
+        {
+          id: "t",
+          type: "on_schedule",
+          config: {
+            intervalAmount: 1,
+            intervalUnit: "day",
+            startsAt: "2030-01-01T00:00:00.000Z",
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "native" },
+            recipients: [],
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.path === "nodes.a.config.amountPerIntervalStroops")).toBe(true);
     }
   });
 
@@ -1133,6 +1320,7 @@ describe("validateFlow", () => {
           type: "split",
           config: {
             asset: { kind: "native" },
+            amountPerIntervalStroops: "1000",
             recipients: [
               { address: ADDR_A, bps: 5000 },
               { address: ADDR_B, bps: 5000 },
@@ -1540,6 +1728,39 @@ describe("validateFlow", () => {
     if (!r.ok) {
       expect(r.errors.some((e) => e.path.includes("amountPerPeriodStroops"))).toBe(true);
     }
+  });
+
+  it("allows a zero subscription amount when it feeds an all-fixed split (derived)", () => {
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "subscription",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            subscriber: ADDR_A,
+            // Hidden in the UI for fixed splits; the pull is derived from the
+            // recipient sum instead.
+            amountPerPeriodStroops: "0",
+            intervalAmount: 1,
+            intervalUnit: "day",
+          },
+        },
+        {
+          id: "a",
+          type: "split",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            recipients: [
+              { address: ADDR_A, mode: "fixed", amountStroops: "1100000000" },
+              { address: ADDR_B, mode: "fixed", amountStroops: "1000000000" },
+            ],
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(true);
   });
 
   it("allows a zero subscription amount in dev mode (filled via API)", () => {
@@ -2543,5 +2764,177 @@ describe("validateFlow — hard limits", () => {
     expect(usdcSplit("500000000").ok).toBe(false); // 50 USDC: below min
     expect(usdcSplit("2000000000").ok).toBe(false); // 200 USDC: above max
     expect(usdcSplit("3000000000").ok).toBe(false); // 300 USDC: above max
+  });
+});
+
+describe("validateFlow — schedule window (endsAt vs start)", () => {
+  const PAST = "2020-01-01T00:00:00.000Z";
+  const PAST_LATER = "2020-06-01T00:00:00.000Z";
+  const FUTURE = "2030-01-01T00:00:00.000Z";
+  const FUTURE_LATER = "2030-06-01T00:00:00.000Z";
+
+  function scheduleFlow(triggerConfig: Record<string, unknown>) {
+    return {
+      nodes: [
+        { id: "t", type: "on_schedule", config: triggerConfig },
+        {
+          id: "a",
+          type: "pay",
+          config: {
+            recipient: ADDR_A,
+            amountStroops: "100",
+            asset: { kind: "known", symbol: "USDC" },
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    };
+  }
+
+  function subscriptionFlow(triggerConfig: Record<string, unknown>) {
+    return {
+      nodes: [
+        {
+          id: "t",
+          type: "subscription",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            subscriber: ADDR_A,
+            amountPerPeriodStroops: "10000000",
+            intervalAmount: 1,
+            intervalUnit: "day",
+            ...triggerConfig,
+          },
+        },
+        {
+          id: "a",
+          type: "pay",
+          config: {
+            recipient: ADDR_B,
+            amountStroops: "10000000",
+            asset: { kind: "known", symbol: "USDC" },
+            mode: "fixed",
+            fullAmount: false,
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    };
+  }
+
+  it("rejects an on_schedule whose endsAt is in the past (start clamped to now)", () => {
+    const r = validateFlow(
+      scheduleFlow({
+        intervalAmount: 1,
+        intervalUnit: "hour",
+        startsAt: PAST,
+        endsAt: PAST_LATER,
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.path.endsWith("config.endsAt"))).toBe(true);
+      expect(r.errors.find((e) => e.path.endsWith("config.endsAt"))?.friendlyMessage).toMatch(
+        /already passed/i,
+      );
+    }
+  });
+
+  it("rejects an on_schedule whose endsAt is before a future startsAt", () => {
+    const r = validateFlow(
+      scheduleFlow({
+        intervalAmount: 1,
+        intervalUnit: "hour",
+        startsAt: FUTURE_LATER,
+        endsAt: FUTURE,
+      }),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.find((e) => e.path.endsWith("config.endsAt"))?.friendlyMessage).toMatch(
+        /before its start time/i,
+      );
+    }
+  });
+
+  it("rejects an on_schedule whose endsAt equals its startsAt", () => {
+    const r = validateFlow(
+      scheduleFlow({
+        intervalAmount: 1,
+        intervalUnit: "hour",
+        startsAt: FUTURE,
+        endsAt: FUTURE,
+      }),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("accepts an on_schedule with a valid future window", () => {
+    const r = validateFlow(
+      scheduleFlow({
+        intervalAmount: 1,
+        intervalUnit: "hour",
+        startsAt: FUTURE,
+        endsAt: FUTURE_LATER,
+      }),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts an on_schedule with a past startsAt and a future endsAt (clamped start)", () => {
+    const r = validateFlow(
+      scheduleFlow({
+        intervalAmount: 1,
+        intervalUnit: "hour",
+        startsAt: PAST,
+        endsAt: FUTURE,
+      }),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("rejects a subscription whose endsAt is in the past", () => {
+    const r = validateFlow(subscriptionFlow({ endsAt: PAST }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errors.some((e) => e.path.endsWith("config.endsAt"))).toBe(true);
+    }
+  });
+
+  it("accepts a subscription with a future endsAt", () => {
+    const r = validateFlow(subscriptionFlow({ endsAt: FUTURE }));
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a payroll with fillScheduleViaApi even with a past endsAt (placeholder schedule)", () => {
+    const r = validateFlow({
+      nodes: [
+        {
+          id: "t",
+          type: "payroll",
+          config: {
+            asset: { kind: "known", symbol: "USDC" },
+            employer: ADDR_A,
+            intervalAmount: 1,
+            intervalUnit: "week",
+            endsAt: PAST,
+            fillScheduleViaApi: true,
+          },
+        },
+        {
+          id: "a",
+          type: "pay",
+          config: {
+            recipient: ADDR_B,
+            amountStroops: "10000000",
+            asset: { kind: "known", symbol: "USDC" },
+            mode: "fixed",
+            fullAmount: false,
+          },
+        },
+      ],
+      edges: [{ id: "e1", source: "t", target: "a" }],
+    });
+    expect(r.ok).toBe(true);
   });
 });

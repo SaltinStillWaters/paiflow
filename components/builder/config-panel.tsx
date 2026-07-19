@@ -214,6 +214,25 @@ export default function ConfigPanel({
     } as FlowNode);
   }, [triggerType, node, onChange]);
 
+  // Streamer (on_schedule) vests a fixed amount per interval — "send full
+  // amount" and percentage mode have no referent because the funded total is
+  // derived from the configured amount (unlike on_receive, where the incoming
+  // payment is unknown at design time). If a user switches an existing pay
+  // node to an on_schedule trigger, reset it to fixed mode.
+  useEffect(() => {
+    if (triggerType !== "on_schedule" || node.type !== "pay") return;
+    if (!node.config.fullAmount && node.config.mode !== "percentage") return;
+    onChange({
+      ...node,
+      config: {
+        ...node.config,
+        fullAmount: false,
+        mode: "fixed" as const,
+        percentage: undefined,
+      },
+    } as FlowNode);
+  }, [triggerType, node, onChange]);
+
   return (
     <aside
       className={cn(
@@ -641,6 +660,32 @@ export default function ConfigPanel({
               <span className="material-symbols-outlined text-[14px]">tune</span>
               Payment value set via the API after deploy
             </div>
+          ) : triggerType === "on_schedule" ? (
+            // Scheduled streams vest a fixed amount per interval — full-amount
+            // and percentage modes are not offered here.
+            <Field
+              label={`Amount per interval (${assetLabel(node.config.asset)})`}
+              error={fieldError("amountStroops")}
+            >
+              <input
+                className="input"
+                value={node.config.amountStroops ? formatStroops(node.config.amountStroops) : ""}
+                onChange={(e) =>
+                  onChange({
+                    ...node,
+                    config: {
+                      ...node.config,
+                      amountStroops: tokenAmountToStroops(e.target.value),
+                    },
+                  } as FlowNode)
+                }
+              />
+              {node.config.amountStroops && (
+                <div className="mt-0.5 text-[11px] text-zinc-500">
+                  = {stroopsToDisplay(node.config.amountStroops, node.config.asset)} per interval
+                </div>
+              )}
+            </Field>
           ) : (
             <>
               <label className="flex items-center gap-2">
@@ -785,38 +830,57 @@ export default function ConfigPanel({
             <></>
           )}
 
-          {triggerType === "on_schedule" && (
-            <Field
-              label={`Amount per interval (${assetLabel(node.config.asset)})`}
-              error={fieldError("amountPerIntervalStroops")}
-            >
-              <input
-                className="input"
-                value={
-                  node.config.amountPerIntervalStroops
-                    ? formatStroops(node.config.amountPerIntervalStroops)
-                    : ""
+          {triggerType === "on_schedule" &&
+            (node.config.recipients.length > 0 &&
+            node.config.recipients.every((r) => r.mode === "fixed") ? (
+              // Fixed mode: the per-interval base is the sum of the recipient
+              // amounts (streamerAmountPerInterval in to-params.ts), so the
+              // separate field is neither shown nor required.
+              <div className="text-[11px] text-zinc-500">
+                Amount per interval:{" "}
+                {stroopsToDisplay(
+                  splitTotalFixedStroops(node.config.recipients) ?? "0",
+                  node.config.asset,
+                )}{" "}
+                — the sum of the recipient amounts below
+              </div>
+            ) : (
+              <Field
+                label={
+                  <>
+                    Amount per interval ({assetLabel(node.config.asset)}){" "}
+                    <span className="text-error">*</span>
+                  </>
                 }
-                placeholder="Amount released each interval"
-                onChange={(e) => {
-                  const stroops = tokenAmountToStroops(e.target.value);
-                  onChange({
-                    ...node,
-                    config: {
-                      ...node.config,
-                      amountPerIntervalStroops: stroops || undefined,
-                    },
-                  });
-                }}
-              />
-              {node.config.amountPerIntervalStroops && (
-                <div className="mt-0.5 text-[11px] text-zinc-500">
-                  = {stroopsToDisplay(node.config.amountPerIntervalStroops, node.config.asset)} per
-                  interval
-                </div>
-              )}
-            </Field>
-          )}
+                error={fieldError("amountPerIntervalStroops")}
+              >
+                <input
+                  className="input"
+                  value={
+                    node.config.amountPerIntervalStroops
+                      ? formatStroops(node.config.amountPerIntervalStroops)
+                      : ""
+                  }
+                  placeholder="Amount released each interval"
+                  onChange={(e) => {
+                    const stroops = tokenAmountToStroops(e.target.value);
+                    onChange({
+                      ...node,
+                      config: {
+                        ...node.config,
+                        amountPerIntervalStroops: stroops || undefined,
+                      },
+                    });
+                  }}
+                />
+                {node.config.amountPerIntervalStroops && (
+                  <div className="mt-0.5 text-[11px] text-zinc-500">
+                    = {stroopsToDisplay(node.config.amountPerIntervalStroops, node.config.asset)}{" "}
+                    per interval
+                  </div>
+                )}
+              </Field>
+            ))}
 
           {node.type === "split" && (
             <SplitRecipientsEditor
@@ -913,32 +977,60 @@ export default function ConfigPanel({
               addressBookError={addressBookError}
             />
           </ApiFillField>
-          <Field
-            label={`Amount per period (${assetLabel(node.config.asset)})`}
-            error={fieldError("amountPerPeriodStroops")}
-          >
-            <input
-              className="input"
-              value={formatStroops(node.config.amountPerPeriodStroops)}
-              onChange={(e) =>
-                onChange({
-                  ...node,
-                  config: {
-                    ...node.config,
-                    amountPerPeriodStroops: tokenAmountToStroops(e.target.value),
-                  },
-                })
-              }
-            />
-            <ApiFillHint
-              show={
-                devMode &&
-                (!node.config.amountPerPeriodStroops || node.config.amountPerPeriodStroops === "0")
-              }
-            >
-              Leave empty to set the amount via the API after deploy.
-            </ApiFillHint>
-          </Field>
+          {(() => {
+            // When the subscription feeds a split whose recipients are all
+            // fixed amounts, the per-period pull is DERIVED from their sum
+            // (flowToPipeline does the same) — the manual field would only
+            // contradict the recipient amounts, so show the derived value
+            // read-only instead. Mirrors the streamer fixed-split rule.
+            const downstreamId = graph.edges.find((e) => e.source === node.id)?.target;
+            const downstream = graph.nodes.find((n) => n.id === downstreamId);
+            const fixedTotal =
+              downstream?.type === "split" &&
+              downstream.config.recipients.length > 0 &&
+              downstream.config.recipients.every((r) => r.mode === "fixed")
+                ? splitTotalFixedStroops(downstream.config.recipients)
+                : null;
+            if (fixedTotal && fixedTotal !== "0") {
+              return (
+                <Field label={`Amount per period (${assetLabel(node.config.asset)})`}>
+                  <div className="rounded border border-zinc-800 bg-zinc-900/50 p-2 text-xs text-zinc-400">
+                    Derived from the split recipients: {formatStroops(fixedTotal)}{" "}
+                    {assetLabel(node.config.asset)} per period (sum of the fixed amounts).
+                  </div>
+                </Field>
+              );
+            }
+            return (
+              <Field
+                label={`Amount per period (${assetLabel(node.config.asset)})`}
+                error={fieldError("amountPerPeriodStroops")}
+              >
+                <input
+                  className="input"
+                  value={formatStroops(node.config.amountPerPeriodStroops)}
+                  onChange={(e) =>
+                    onChange({
+                      ...node,
+                      config: {
+                        ...node.config,
+                        amountPerPeriodStroops: tokenAmountToStroops(e.target.value),
+                      },
+                    })
+                  }
+                />
+                <ApiFillHint
+                  show={
+                    devMode &&
+                    (!node.config.amountPerPeriodStroops ||
+                      node.config.amountPerPeriodStroops === "0")
+                  }
+                >
+                  Leave empty to set the amount via the API after deploy.
+                </ApiFillHint>
+              </Field>
+            );
+          })()}
           {(() => {
             const cfg = node.config as {
               intervalAmount?: number;
@@ -1720,12 +1812,24 @@ function SplitRecipientsEditor({
 
   const triggerType = trigger?.type ?? null;
   const isPayroll = triggerType === "payroll";
+  const isStreamer = triggerType === "on_schedule";
   const fiatPayoutAvailable =
     triggerType === "payroll" ||
     (!devMode && triggerType !== null && FIAT_PAYOUT_TRIGGERS.has(triggerType));
   const mode = isPayroll ? "fixed" : (node.config.recipients[0]?.mode ?? "percentage");
   const totalFixed = splitTotalFixedStroops(node.config.recipients);
   const minAmount = trigger?.type === "on_receive" ? trigger.config.minAmountStroops : undefined;
+
+  // For scheduled splits the projection base lives on the split itself: the
+  // amount-per-interval field in percentage mode, or the sum of the fixed
+  // amounts in fixed mode (to-params derives the same base).
+  const projectionBase =
+    sourceAmount ??
+    (isStreamer
+      ? mode === "fixed"
+        ? (totalFixed ?? undefined)
+        : node.config.amountPerIntervalStroops
+      : undefined);
 
   // Cache the shares from the mode the user is leaving so that toggling
   // percentage → fixed → percentage restores the previously entered values
@@ -1841,10 +1945,20 @@ function SplitRecipientsEditor({
         </Field>
       )}
 
+      {isStreamer && (
+        <div className="text-xs text-zinc-400">
+          {mode === "percentage"
+            ? "The amount per interval is divided among the recipients by their shares."
+            : "Each recipient receives their fixed amount every interval."}
+        </div>
+      )}
+
       <div className={cn("text-xs", listError ? "text-error" : "text-zinc-400")}>
         {mode === "percentage"
           ? "Recipients (shares must sum to 100%)"
-          : "Recipients (fixed amounts accumulate until the total is reached)"}
+          : isStreamer
+            ? "Recipients (each receives their amount every interval)"
+            : "Recipients (fixed amounts accumulate until the total is reached)"}
       </div>
 
       {listError && (
@@ -1867,9 +1981,9 @@ function SplitRecipientsEditor({
           ? [...fieldErrors.keys()].some((k) => k.startsWith(`recipients.${i}.`))
           : false;
         const projected =
-          isPercentage && sourceAmount
+          isPercentage && projectionBase
             ? stroopsToDisplay(
-                ((BigInt(sourceAmount) * BigInt(r.bps)) / 10000n).toString(),
+                ((BigInt(projectionBase) * BigInt(r.bps)) / 10000n).toString(),
                 node.config.asset,
               )
             : null;
