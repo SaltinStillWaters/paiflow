@@ -14,6 +14,21 @@ Drag `On Receive USDC` → `Split 60/30/10` onto a canvas, hit **Deploy**, get a
 
 [`Live App`](https://paiflow.xyz) — username: admin ; password: admin1234567
 
+[`User Feedback Survey`](https://forms.gle/QTznHiqXCDEnJZq59) — help us improve Paiflow
+
+[`Survey Responses`](https://docs.google.com/spreadsheets/d/1qpaEZPdl_vHMjrSe1Ld6OEMmiliarMKl-i4zdRtLIJQ/edit?usp=sharing) — view aggregated feedback
+
+---
+
+## 📸 Screenshots
+
+The repo ships both desktop and mobile screenshots in [`screenshots/`](./screenshots/). They are regenerated with Playwright for every major UI change.
+
+- **Desktop gallery:** [`screenshots/*`](./screenshots/)
+- **Mobile gallery:** [`screenshots/*-mobile.png`](./screenshots/)
+
+Key flows covered: landing, auth, dashboard, builder, deploy review, admin overview, and submission proof.
+
 ---
 
 ## 🌐 Testnet Deployments
