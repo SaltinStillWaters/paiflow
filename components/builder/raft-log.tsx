@@ -429,7 +429,6 @@ export default function RaftLog({
         }
       }, 1000);
     } catch (err) {
-      console.error("startRecording error:", err);
       if (err instanceof DOMException && err.name === "NotAllowedError") {
         const perm = await navigator.permissions
           .query({ name: "microphone" as PermissionName })

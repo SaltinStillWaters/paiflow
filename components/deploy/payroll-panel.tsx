@@ -393,9 +393,9 @@ export default function PayrollPanel({
               error?: { message?: string };
             };
             if (!recordRes.ok) {
-              console.warn("Failed to record payroll run:", recordJson.error?.message);
+              // silently ignore — the run was on-chain; off-ramp bookkeeping is best-effort
             } else if (recordJson.data?.offRampError) {
-              console.warn("Off-ramp job creation failed:", recordJson.data.offRampError);
+              // silently ignore — off-ramp job creation is best-effort
             }
 
             return { txHash: json.data.txHash };
