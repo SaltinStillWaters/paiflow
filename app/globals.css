@@ -143,7 +143,7 @@
  * which silently breaks `max-w-xl` etc. — re-point the conflicting utilities
  * at `--container-*` so both scales coexist.
  *
- * TODO(brand): This is a targeted shim, not a structural fix. The long-term
+ * NOTE(brand): This is a targeted shim, not a structural fix. The long-term
  * play is to rename the conflicting BRAND spacing tokens (e.g. tight /
  * compact / comfortable / spacious / huge) and update every consumer — at
  * which point this block, and the `--container-*` re-declarations above,
