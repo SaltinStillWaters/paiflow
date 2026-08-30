@@ -128,11 +128,9 @@ export class PdaxOffRampProvider implements OffRampProvider {
       side: "sell",
       idempotency_id: request.jobId,
     };
-    console.log(
-      "[PDAX executeTrade] idempotency_id:",
-      request.jobId,
-      "body:",
-      JSON.stringify(body),
+    log.info(
+      { idempotencyId: request.jobId, body },
+      "[PDAX executeTrade]",
     );
 
     const res = await this.fetchWithRetry(`${this.baseUrl()}/pdax-institution/v1/trade`, {

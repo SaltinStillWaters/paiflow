@@ -50,12 +50,10 @@ export async function sendEmail(opts: SendEmailOptions): Promise<SendEmailResult
         to: recipients,
         subject: opts.subject,
         replyTo: opts.replyTo,
+        html: opts.html,
+        text: opts.text,
       },
       "[mail:dev-fallback] RESEND_API_KEY unset — email not delivered, logging instead",
-    );
-    // eslint-disable-next-line no-console
-    console.log(
-      `\n==== [DEV EMAIL] ====\nFrom: ${from}\nTo: ${recipients}\nSubject: ${opts.subject}\n${opts.replyTo ? `Reply-To: ${opts.replyTo}\n` : ""}--- HTML ---\n${opts.html}\n${opts.text ? `\n--- TEXT ---\n${opts.text}\n` : ""}=====================\n`,
     );
     return { ok: true, id: "dev-fallback" };
   }
